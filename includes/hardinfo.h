@@ -23,10 +23,14 @@
 #include "config.h"
 #include "shell.h"
 #include "vendor.h"
-#include <libintl.h>
-#include <locale.h>
-#define _(STRING)    gettext(STRING)
-#define N_(STRING) (STRING)
+#include "gettext.h"
+#include "info.h"
+
+#define HARDINFO_COPYRIGHT_LATEST_YEAR 2017
+
+#ifndef LOCALEDIR
+#define LOCALEDIR "/usr/share/locale"
+#endif
 
 typedef enum {
   MODULE_FLAG_NONE = 0,
@@ -46,9 +50,9 @@ struct _ProgramParameters {
   gboolean list_modules;
   gboolean autoload_deps;
   gboolean run_xmlrpc_server;
-  
+
   gint     report_format;
-  
+
   gchar  **use_modules;
   gchar   *run_benchmark;
   gchar   *path_lib;
@@ -88,7 +92,6 @@ gchar       *strreplace(gchar *string, gchar *replace, gchar *replacement);
 /* Widget utility functions */
 void widget_set_cursor(GtkWidget *widget, GdkCursorType cursor_type);
 gint tree_view_get_visible_height(GtkTreeView *tv);
-void tree_view_save_image(gchar *filename);
 
 /* File Chooser utility functions */
 void      file_chooser_open_expander(GtkWidget *chooser);
@@ -160,5 +163,19 @@ void moreinfo_del_with_prefix(gchar *prefix);
 void moreinfo_clear(void);
 gchar *moreinfo_lookup_with_prefix(gchar *prefix, gchar *key);
 gchar *moreinfo_lookup(gchar *key);
+
+#if !GLIB_CHECK_VERSION(2,44,0)
+    /* g_strv_contains() requires glib>2.44
+     * fallback for older versions in hardinfo/util.c */
+gboolean g_strv_contains(const gchar * const * strv, const gchar *str);
+#endif
+
+/* Hardinfo labels that have # are truncated and/or hidden.
+ * Labels can't have $ because that is the delimiter in
+ * moreinfo.
+ * replacing = true will free v */
+gchar *hardinfo_clean_label(const gchar *v, int replacing);
+/* hardinfo uses the values as {ht,x}ml, apparently */
+gchar *hardinfo_clean_value(const gchar *v, int replacing);
 
 #endif				/* __HARDINFO_H__ */

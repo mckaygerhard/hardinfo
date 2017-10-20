@@ -37,6 +37,7 @@
 #include <socket.h>
 
 #include "devices.h"
+#include "dt_util.h"
 
 gchar *callback_processors();
 gchar *callback_memory();
@@ -51,6 +52,7 @@ gchar *callback_usb();
 gchar *callback_dmi();
 gchar *callback_spd();
 #endif
+gchar *callback_dtree();
 gchar *callback_device_resources();
 
 void scan_processors(gboolean reload);
@@ -66,6 +68,7 @@ void scan_usb(gboolean reload);
 void scan_dmi(gboolean reload);
 void scan_spd(gboolean reload);
 #endif
+void scan_dtree(gboolean reload);
 void scan_device_resources(gboolean reload);
 
 gboolean root_required_for_resources(void);
@@ -73,6 +76,7 @@ gboolean root_required_for_resources(void);
 gchar *hi_more_info(gchar *entry);
 
 enum {
+    ENTRY_DTREE,
     ENTRY_PROCESSOR,
     ENTRY_MEMORY,
     ENTRY_PCI,
@@ -100,9 +104,14 @@ static ModuleEntry entries[] = {
 #if defined(ARCH_x86) || defined(ARCH_x86_64)
     [ENTRY_DMI] = {N_("DMI"), "computer.png", callback_dmi, scan_dmi, MODULE_FLAG_NONE},
     [ENTRY_SPD] = {N_("Memory SPD"), "memory.png", callback_spd, scan_spd, MODULE_FLAG_NONE},
+    [ENTRY_DTREE] = {"#"},
+#else
+    [ENTRY_DMI] = {"#"},
+    [ENTRY_SPD] = {"#"},
+    [ENTRY_DTREE] = {N_("Device Tree"), "devices.png", callback_dtree, scan_dtree, MODULE_FLAG_NONE},
 #endif	/* x86 or x86_64 */
     [ENTRY_RESOURCES] = {N_("Resources"), "resources.png", callback_device_resources, scan_device_resources, MODULE_FLAG_NONE},
-    {NULL}
+    { NULL }
 };
 
 static GSList *processors = NULL;
@@ -117,20 +126,126 @@ gchar *lginterval = NULL;
 
 #include <vendor.h>
 
+static gint proc_cmp_model_name(Processor *a, Processor *b) {
+    return g_strcmp0(a->model_name, b->model_name);
+}
+
+static gint proc_cmp_max_freq(Processor *a, Processor *b) {
+    if (a->cpu_mhz == b->cpu_mhz)
+        return 0;
+    if (a->cpu_mhz > b->cpu_mhz)
+        return -1;
+    return 1;
+}
+
+gchar *processor_describe_default(GSList * processors)
+{
+    int packs, cores, threads;
+    const gchar  *packs_fmt, *cores_fmt, *threads_fmt;
+    gchar *ret, *full_fmt;
+
+    cpu_procs_cores_threads(&packs, &cores, &threads);
+
+    /* if topology info was available, else fallback to old method */
+    if (cores > 0) {
+        packs_fmt = ngettext("%d physical processor", "%d physical processors", packs);
+        cores_fmt = ngettext("%d core", "%d cores", cores);
+        threads_fmt = ngettext("%d thread", "%d threads", threads);
+        full_fmt = g_strdup_printf(_(/*/NP procs; NC cores; NT threads*/ "%s; %s; %s"), packs_fmt, cores_fmt, threads_fmt);
+        ret = g_strdup_printf(full_fmt, packs, cores, threads);
+        g_free(full_fmt);
+        return ret;
+    } else {
+        return processor_describe_by_counting_names(processors);
+    }
+}
+
+gchar *processor_name_default(GSList * processors)
+{
+    gchar *ret = g_strdup("");
+    GSList *tmp, *l;
+    Processor *p;
+    gchar *cur_str = NULL;
+    gint cur_count = 0;
+
+    tmp = g_slist_copy(processors);
+    tmp = g_slist_sort(tmp, (GCompareFunc)proc_cmp_model_name);
+
+    for (l = tmp; l; l = l->next) {
+        p = (Processor*)l->data;
+        if (cur_str == NULL) {
+            cur_str = p->model_name;
+            cur_count = 1;
+        } else {
+            if(g_strcmp0(cur_str, p->model_name)) {
+                ret = h_strdup_cprintf("%s%s", ret, strlen(ret) ? "; " : "", cur_str);
+                cur_str = p->model_name;
+                cur_count = 1;
+            } else {
+                cur_count++;
+            }
+        }
+    }
+    ret = h_strdup_cprintf("%s%s", ret, strlen(ret) ? "; " : "", cur_str);
+    g_slist_free(tmp);
+    return ret;
+}
+
+/* TODO: prefix counts are threads when they should be cores. */
+gchar *processor_describe_by_counting_names(GSList * processors)
+{
+    gchar *ret = g_strdup("");
+    GSList *tmp, *l;
+    Processor *p;
+    gchar *cur_str = NULL;
+    gint cur_count = 0;
+
+    tmp = g_slist_copy(processors);
+    tmp = g_slist_sort(tmp, (GCompareFunc)proc_cmp_model_name);
+
+    for (l = tmp; l; l = l->next) {
+        p = (Processor*)l->data;
+        if (cur_str == NULL) {
+            cur_str = p->model_name;
+            cur_count = 1;
+        } else {
+            if(g_strcmp0(cur_str, p->model_name)) {
+                ret = h_strdup_cprintf("%s%dx %s", ret, strlen(ret) ? " + " : "", cur_count, cur_str);
+                cur_str = p->model_name;
+                cur_count = 1;
+            } else {
+                cur_count++;
+            }
+        }
+    }
+    ret = h_strdup_cprintf("%s%dx %s", ret, strlen(ret) ? " + " : "", cur_count, cur_str);
+    g_slist_free(tmp);
+    return ret;
+}
+
 gchar *get_processor_name(void)
 {
     scan_processors(FALSE);
-
-    Processor *p = (Processor *) processors->data;
-
-    if (g_slist_length(processors) > 1) {
-	return idle_free(g_strdup_printf("%dx %s",
-					 g_slist_length(processors),
-					 p->model_name));
-    } else {
-	return p->model_name;
-    }
+    return processor_name(processors);
 }
+
+gchar *get_processor_desc(void)
+{
+    scan_processors(FALSE);
+    return processor_describe(processors);
+}
+
+gchar *get_processor_name_and_desc(void)
+{
+    scan_processors(FALSE);
+    gchar* name = processor_name(processors);
+    gchar* desc = processor_describe(processors);
+    gchar* nd = g_strdup_printf("%s\n%s", name, desc);
+    g_free(name);
+    g_free(desc);
+    return nd;
+}
+
 
 gchar *get_storage_devices(void)
 {
@@ -160,66 +275,140 @@ gchar *get_processor_count(void)
     return g_strdup_printf("%d", g_slist_length(processors));
 }
 
-gchar *get_processor_frequency(void)
+/* TODO: maybe move into processor.c along with processor_name() etc.
+ * Could mention the big.LITTLE cluster arangement for ARM that kind of thing.
+ * TODO: prefix counts are threads when they should be cores. */
+gchar *processor_frequency_desc(GSList * processors)
 {
+    gchar *ret = g_strdup("");
+    GSList *tmp, *l;
     Processor *p;
+    float cur_val = -1;
+    gint cur_count = 0;
+
+    tmp = g_slist_copy(processors);
+    tmp = g_slist_sort(tmp, (GCompareFunc)proc_cmp_max_freq);
+
+    for (l = tmp; l; l = l->next) {
+        p = (Processor*)l->data;
+        if (cur_val == -1) {
+            cur_val = p->cpu_mhz;
+            cur_count = 1;
+        } else {
+            if(cur_val != p->cpu_mhz) {
+                ret = h_strdup_cprintf("%s%dx %.2f %s", ret, strlen(ret) ? " + " : "", cur_count, cur_val, _("MHz") );
+                cur_val = p->cpu_mhz;
+                cur_count = 1;
+            } else {
+                cur_count++;
+            }
+        }
+    }
+    ret = h_strdup_cprintf("%s%dx %.2f %s", ret, strlen(ret) ? " + " : "", cur_count, cur_val, _("MHz"));
+    g_slist_free(tmp);
+    return ret;
+}
+
+gchar *get_processor_frequency_desc(void)
+{
+    scan_processors(FALSE);
+    return processor_frequency_desc(processors);
+}
+
+gchar *get_processor_max_frequency(void)
+{
+    GSList *l;
+    Processor *p;
+    float max_freq = 0;
 
     scan_processors(FALSE);
 
-    p = (Processor *)processors->data;
-    if (p->cpu_mhz == 0.0f) {
+    for (l = processors; l; l = l->next) {
+        p = (Processor*)l->data;
+        if (p->cpu_mhz > max_freq)
+            max_freq = p->cpu_mhz;
+    }
+
+    if (max_freq == 0.0f) {
         return g_strdup(N_("Unknown"));
     } else {
-        return g_strdup_printf("%.0f", p->cpu_mhz);
+        return g_strdup_printf("%.2f %s", max_freq, _("MHz") );
     }
 }
 
 gchar *get_pci_device_description(gchar *pci_id)
 {
     gchar *description;
-    
+
     if (!_pci_devices) {
         scan_pci(FALSE);
     }
-    
+
     if ((description = g_hash_table_lookup(_pci_devices, pci_id))) {
         return g_strdup(description);
     }
-    
+
     return NULL;
 }
 
 gchar *get_memory_total(void)
 {
     scan_memory(FALSE);
-    return moreinfo_lookup ("DEV:Total Memory"); //hi_more_info(N_("Total Memory"));
+    return moreinfo_lookup ("DEV:MemTotal");
 }
 
 gchar *get_motherboard(void)
 {
-    char *board_name, *board_vendor;
+    char *board_name, *board_vendor, *system_version;
+    char *ret;
+
 #if defined(ARCH_x86) || defined(ARCH_x86_64)
     scan_dmi(FALSE);
+
+    board_name = dmi_get_str("baseboard-product-name");
+    if (board_name == NULL)
+        board_name = dmi_get_str("system-product-name");
+
+    board_vendor = dmi_get_str("baseboard-manufacturer");
+    if (board_vendor == NULL)
+        board_vendor = dmi_get_str("system-manufacturer");
+
+    system_version = dmi_get_str("system-version");
+
+    if (board_name && board_vendor && system_version)
+        ret = g_strdup_printf("%s / %s (%s)", system_version, board_name, board_vendor);
+    else if (board_name && board_vendor)
+        ret = g_strconcat(board_vendor, " ", board_name, NULL);
+    else if (board_name)
+        ret = g_strdup(board_name);
+    else if (board_vendor)
+        ret = g_strdup(board_vendor);
+    else
+        ret = g_strdup(_("(Unknown)"));
+
+    free(board_name);
+    free(board_vendor);
+    free(system_version);
+    return ret;
 #endif
-    board_name = moreinfo_lookup("DEV:DMI:Board:Name");
-    board_vendor = moreinfo_lookup("DEV:DMI:Board:Vendor");
-    
-    if (board_name && board_vendor && *board_name && *board_vendor)
-       return g_strconcat(board_vendor, " ", board_name, NULL);
-    else if (board_name && *board_name)
-       return g_strconcat(board_name, _(" (vendor unknown)"), NULL);
-    else if (board_vendor && *board_vendor)
-       return g_strconcat(board_vendor, _(" (model unknown)"), NULL);
-    
+
+    /* use device tree "model" */
+    board_vendor = dtr_get_string("/model", 0);
+    if (board_vendor != NULL)
+        return board_vendor;
+
     return g_strdup(_("Unknown"));
 }
 
 ShellModuleMethod *hi_exported_methods(void)
 {
     static ShellModuleMethod m[] = {
-        {"getProcessorCount", get_processor_count},
+	{"getProcessorCount", get_processor_count},
 	{"getProcessorName", get_processor_name},
-	{"getProcessorFrequency", get_processor_frequency},
+	{"getProcessorDesc", get_processor_desc},
+	{"getProcessorNameAndDesc", get_processor_name_and_desc},
+	{"getProcessorFrequency", get_processor_max_frequency},
+	{"getProcessorFrequencyDesc", get_processor_frequency_desc},
 	{"getMemoryTotal", get_memory_total},
 	{"getStorageDevices", get_storage_devices},
 	{"getPrinters", get_printers},
@@ -235,7 +424,7 @@ ShellModuleMethod *hi_exported_methods(void)
 gchar *hi_more_info(gchar * entry)
 {
     gchar *info = moreinfo_lookup_with_prefix("DEV", entry);
-    
+
     if (info)
 	return g_strdup(info);
 
@@ -267,6 +456,13 @@ void scan_spd(gboolean reload)
     SCAN_END();
 }
 #endif
+
+void scan_dtree(gboolean reload)
+{
+    SCAN_START();
+    __scan_dtree();
+    SCAN_END();
+}
 
 void scan_processors(gboolean reload)
 {
@@ -353,15 +549,28 @@ gchar *callback_spd()
 }
 #endif
 
+gchar *callback_dtree()
+{
+    return g_strdup_printf("%s"
+        "[$ShellParam$]\n"
+        "ViewType=1\n", dtree_info);
+}
+
 gchar *callback_memory()
 {
     return g_strdup_printf("[Memory]\n"
-			   "%s\n"
-			   "[$ShellParam$]\n"
-			   "ViewType=2\n"
-			   "LoadGraphSuffix= kB\n"
-			   "RescanInterval=2000\n"
-			   "%s\n", meminfo, lginterval);
+               "%s\n"
+               "[$ShellParam$]\n"
+               "ViewType=2\n"
+               "LoadGraphSuffix= kB\n"
+               "RescanInterval=2000\n"
+               "ColumnTitle$TextValue=%s\n"
+               "ColumnTitle$Extra1=%s\n"
+               "ColumnTitle$Value=%s\n"
+               "ShowColumnHeaders=true\n"
+               "%s\n", meminfo,
+               _("Field"), _("Description"), _("Value"), /* column labels */
+               lginterval);
 }
 
 gchar *callback_battery()
@@ -380,8 +589,20 @@ gchar *callback_pci()
 
 gchar *callback_sensors()
 {
-    return g_strdup_printf("[$ShellParam$]\n"
-			   "ReloadInterval=5000\n" "%s", sensors);
+    return g_strdup_printf("[Sensors]\n"
+                           "%s\n"
+                           "[$ShellParam$]\n"
+                           "ViewType=2\n"
+                           "LoadGraphSuffix=\n"
+                           "ColumnTitle$TextValue=%s\n"
+                           "ColumnTitle$Value=%s\n"
+                           "ColumnTitle$Extra1=%s\n"
+                           "ShowColumnHeaders=true\n"
+                           "RescanInterval=5000\n"
+                           "%s",
+                           sensors,
+                           _("Sensor"), _("Value"), _("Type"), /* column labels */
+                           lginterval);
 }
 
 gchar *callback_printers()
@@ -455,7 +676,7 @@ void hi_module_init(void)
         .save_to = "cpuflags.conf",
         .get_data = NULL
       };
-      
+
       sync_manager_add_entry(&se);
     }
 #endif	/* defined(ARCH_x86) */
@@ -497,7 +718,7 @@ const gchar *hi_note_func(gint entry)
 {
     if (entry == ENTRY_RESOURCES) {
         if (root_required_for_resources()) {
-            return "Resource information requires superuser privileges";
+            return g_strdup(_("Resource information requires superuser privileges"));
         }
     }
     return NULL;

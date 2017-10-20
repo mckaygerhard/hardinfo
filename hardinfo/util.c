@@ -60,25 +60,25 @@ gchar *find_program(gchar *program_name)
 		                   "/usr/bin", "/usr/sbin",
 		                   "/bin", "/sbin",
 		                   NULL };
-    
+
     /* we don't need to call stat() every time: cache the results */
     if (!cache) {
     	cache = g_hash_table_new(g_str_hash, g_str_equal);
     } else if ((temp = g_hash_table_lookup(cache, program_name))) {
     	return g_strdup(temp);
     }
-    
+
     for (i = 0; path[i]; i++) {
     	temp = g_build_filename(path[i], program_name, NULL);
-    	
+
     	if (g_file_test(temp, G_FILE_TEST_IS_EXECUTABLE)) {
     		g_hash_table_insert(cache, program_name, g_strdup(temp));
 		return temp;
     	}
-    	
+
     	g_free(temp);
     }
-    
+
     /* our search has failed; use GLib's search (which uses $PATH env var) */
     if ((temp = g_find_program_in_path(program_name))) {
     	g_hash_table_insert(cache, program_name, g_strdup(temp));
@@ -91,42 +91,54 @@ gchar *find_program(gchar *program_name)
 gchar *seconds_to_string(unsigned int seconds)
 {
     unsigned int hours, minutes, days;
+    const gchar *days_fmt, *hours_fmt, *minutes_fmt, *seconds_fmt;
+    gchar *full_fmt, *ret = g_strdup("");
 
     minutes = seconds / 60;
+    seconds %= 60;
     hours = minutes / 60;
     minutes %= 60;
     days = hours / 24;
     hours %= 24;
 
-    if (days < 1) {
-	if (hours < 1)
-	    return g_strdup_printf(ngettext("%d minute", "%d minutes", minutes), minutes);
+    days_fmt = ngettext("%d day", "%d days", days);
+    hours_fmt = ngettext("%d hour", "%d hours", hours);
+    minutes_fmt = ngettext("%d minute", "%d minutes", minutes);
+    seconds_fmt = ngettext("%d second", "%d seconds", seconds);
 
-	return g_strdup_printf(ngettext("%d hour, ", "%d hours, ", hours), hours,
-			       ngettext("%d minute", "%d minutes", minutes), minutes);
+    if (days) {
+        full_fmt = g_strdup_printf("%s %s %s %s", days_fmt, hours_fmt, minutes_fmt, seconds_fmt);
+        ret = g_strdup_printf(full_fmt, days, hours, minutes, seconds);
+    } else if (hours) {
+        full_fmt = g_strdup_printf("%s %s %s", hours_fmt, minutes_fmt, seconds_fmt);
+        ret = g_strdup_printf(full_fmt, hours, minutes, seconds);
+    } else if (minutes) {
+        full_fmt = g_strdup_printf("%s %s", minutes_fmt, seconds_fmt);
+        ret = g_strdup_printf(full_fmt, minutes, seconds);
+    } else {
+        ret = g_strdup_printf(seconds_fmt, seconds);
     }
-    return g_strdup_printf(ngettext("%d day, ", "%d days, ", days), days,
-			   ngettext("%d hour and ", "%d hours and ", hours), hours,
-			   ngettext("%d minute", "%d minutes", minutes), minutes);
+    g_free(full_fmt);
+    return ret;
 }
 
-inline gchar *size_human_readable(gfloat size)
+gchar *size_human_readable(gfloat size)
 {
     if (size < KiB)
-	return g_strdup_printf(_("%.1f B"), size);
+        return g_strdup_printf(_("%.1f B"), size);
     if (size < MiB)
-	return g_strdup_printf(_("%.1f KiB"), size / KiB);
+        return g_strdup_printf(_("%.1f KiB"), size / KiB);
     if (size < GiB)
-	return g_strdup_printf(_("%.1f MiB"), size / MiB);
+        return g_strdup_printf(_("%.1f MiB"), size / MiB);
     if (size < TiB)
-	return g_strdup_printf(_("%.1f GiB"), size / GiB);
+        return g_strdup_printf(_("%.1f GiB"), size / GiB);
     if (size < PiB)
-	return g_strdup_printf(_("%.1f TiB"), size / TiB);
+        return g_strdup_printf(_("%.1f TiB"), size / TiB);
 
     return g_strdup_printf(_("%.1f PiB"), size / PiB);
 }
 
-inline char *strend(gchar * str, gchar chr)
+char *strend(gchar * str, gchar chr)
 {
     if (!str)
 	return NULL;
@@ -138,7 +150,7 @@ inline char *strend(gchar * str, gchar chr)
     return str;
 }
 
-inline void remove_quotes(gchar * str)
+void remove_quotes(gchar * str)
 {
     if (!str)
 	return;
@@ -149,7 +161,7 @@ inline void remove_quotes(gchar * str)
     strend(str, '"');
 }
 
-inline void remove_linefeed(gchar * str)
+void remove_linefeed(gchar * str)
 {
     strend(str, '\n');
 }
@@ -157,15 +169,24 @@ inline void remove_linefeed(gchar * str)
 void widget_set_cursor(GtkWidget * widget, GdkCursorType cursor_type)
 {
     GdkCursor *cursor;
+    GdkDisplay *display;
+    GdkWindow *gdk_window;
 
-    if ((cursor = gdk_cursor_new(cursor_type))) {
-        gdk_window_set_cursor(GDK_WINDOW(widget->window), cursor);
-        gdk_display_flush(gtk_widget_get_display(widget));
+    display = gtk_widget_get_display(widget);
+    cursor = gdk_cursor_new_for_display(display, cursor_type);
+    gdk_window = gtk_widget_get_window(widget);
+    if (cursor) {
+        gdk_window_set_cursor(gdk_window, cursor);
+        gdk_display_flush(display);
+#if GTK_CHECK_VERSION(3, 0, 0)
+        g_object_unref(cursor);
+#else
         gdk_cursor_unref(cursor);
+#endif
     }
 
     while (gtk_events_pending())
-	gtk_main_iteration();
+        gtk_main_iteration();
 }
 
 static gboolean __nonblock_cb(gpointer data)
@@ -484,11 +505,11 @@ void open_url(gchar * url)
     };
     gint i = 0;
     gchar *browser = (gchar *)g_getenv("BROWSER");
-    
+
     if (!browser || *browser == '\0') {
     	browser = (gchar *)browsers[i++];
     }
-    
+
     do {
 	gchar *cmdline = g_strdup_printf("%s '%s'", browser, url);
 
@@ -498,7 +519,7 @@ void open_url(gchar * url)
 	}
 
 	g_free(cmdline);
-    	
+
     	browser = (gchar *)browsers[i++];
     } while (browser);
 
@@ -519,11 +540,11 @@ gchar *strreplacechr(gchar * string, gchar * replace, gchar new_char)
 gchar *strreplace(gchar *string, gchar *replace, gchar *replacement)
 {
     gchar **tmp, *ret;
-    
+
     tmp = g_strsplit(string, replace, 0);
     ret = g_strjoinv(replacement, tmp);
     g_strfreev(tmp);
-    
+
     return ret;
 }
 
@@ -541,12 +562,12 @@ static void module_register_methods(ShellModule * module)
     if (g_module_symbol
 	(module->dll, "hi_exported_methods", (gpointer) & get_methods)) {
 	ShellModuleMethod *methods;
-	
+
 	for (methods = get_methods(); methods->name; methods++) {
 	    ShellModuleMethod method = *methods;
 	    gchar *name = g_path_get_basename(g_module_name(module->dll));
 	    gchar *simple_name = strreplace(name, "lib", "");
-	    
+
 	    strend(simple_name, '.');
 
 	    method_name = g_strdup_printf("%s::%s", simple_name, method.name);
@@ -592,34 +613,34 @@ static gboolean remove_module_methods(gpointer key, gpointer value, gpointer dat
 static void module_unload(ShellModule * module)
 {
     GSList *entry;
-    
+
     if (module->dll) {
         gchar *name;
-        
+
         if (module->deinit) {
         	DEBUG("cleaning up module \"%s\"", module->name);
 		module->deinit();
 	} else {
 		DEBUG("module \"%s\" does not need cleanup", module->name);
 	}
-        
+
         name = g_path_get_basename(g_module_name(module->dll));
         g_hash_table_foreach_remove(__module_methods, remove_module_methods, name);
-        
+
     	g_module_close(module->dll);
     	g_free(name);
     }
-    
+
     g_free(module->name);
     g_object_unref(module->icon);
-    
+
     for (entry = module->entries; entry; entry = entry->next) {
 	ShellModuleEntry *e = (ShellModuleEntry *)entry->data;
-	
+
 	g_source_remove_by_user_data(e);
     	g_free(e);
     }
-    
+
     g_slist_free(module->entries);
     g_free(module);
 }
@@ -631,13 +652,13 @@ void module_unload_all(void)
     GSList *module, *merge_id;
 
     shell = shell_get_main_shell();
-    
+
     sync_manager_clear_entries();
     shell_clear_timeouts(shell);
     shell_clear_tree_models(shell);
     shell_clear_field_updates();
     shell_set_title(shell, NULL);
-    
+
     for (module = shell->tree->modules; module; module = module->next) {
     	module_unload((ShellModule *)module->data);
     }
@@ -648,7 +669,7 @@ void module_unload_all(void)
     }
     g_slist_free(shell->tree->modules);
     g_slist_free(shell->merge_ids);
-    
+
     shell->merge_ids = NULL;
     shell->tree->modules = NULL;
     shell->selected = NULL;
@@ -715,9 +736,11 @@ static ShellModule *module_load(gchar * filename)
    	 	        (gpointer) & (module->deinit));
         g_module_symbol(module->dll, "hi_module_get_summary",
    	 	        (gpointer) & (module->summaryfunc));
-   	 	        
+
 	entries = get_module_entries();
 	while (entries[i].name) {
+        if (*entries[i].name == '#') { i++; continue; } /* skip */
+
 	    ShellModuleEntry *entry = g_new0(ShellModuleEntry, 1);
 
 	    if (params.gui_running) {
@@ -853,9 +876,9 @@ static GSList *modules_check_deps(GSList * modules)
 							module->name,
 							deps[i]);
 			gtk_dialog_add_buttons(GTK_DIALOG(dialog),
-					       GTK_STOCK_NO,
+					       "_No",
 					       GTK_RESPONSE_REJECT,
-					       GTK_STOCK_OPEN,
+					       "_Open",
 					       GTK_RESPONSE_ACCEPT, NULL);
 
 			if (gtk_dialog_run(GTK_DIALOG(dialog)) ==
@@ -963,105 +986,6 @@ gint tree_view_get_visible_height(GtkTreeView * tv)
     return nrows * rect.height;
 }
 
-void tree_view_save_image(gchar * filename)
-{
-    /* this is ridiculously complicated :/ why in the hell gtk+ makes this kind of
-       thing so difficult?  */
-
-    /* FIXME: this does not work if the window (or part of it) isn't visible. does
-       anyone know how to fix this? :/ */
-    Shell *shell = shell_get_main_shell();
-    GtkWidget *widget = shell->info->view;
-
-    PangoLayout *layout;
-    PangoContext *context;
-    PangoRectangle rect;
-
-    GdkPixmap *pm;
-    GdkPixbuf *pb;
-    GdkGC *gc;
-    GdkColor black = { 0, 0, 0, 0 };
-    GdkColor white = { 0, 65535, 65535, 65535 };
-
-    gint w, h, visible_height;
-    gchar *tmp;
-
-    gboolean tv_enabled;
-
-    /* present the window */
-    gtk_window_present(GTK_WINDOW(shell->window));
-
-    /* if the treeview is disabled, we need to enable it so we get the
-       correct colors when saving. we make it insensitive later on if it
-       was this way before entering this function */
-    tv_enabled = GTK_WIDGET_IS_SENSITIVE(widget);
-    gtk_widget_set_sensitive(widget, TRUE);
-
-    gtk_widget_queue_draw(widget);
-
-    /* unselect things in the information treeview */
-    gtk_range_set_value(GTK_RANGE
-			(GTK_SCROLLED_WINDOW(shell->info->scroll)->
-			 vscrollbar), 0.0);
-    gtk_tree_selection_unselect_all(gtk_tree_view_get_selection
-				    (GTK_TREE_VIEW(widget)));
-    while (gtk_events_pending())
-	gtk_main_iteration();
-
-    /* initialize stuff */
-    gc = gdk_gc_new(widget->window);
-    gdk_gc_set_background(gc, &black);
-    gdk_gc_set_foreground(gc, &white);
-
-    context = gtk_widget_get_pango_context(widget);
-    layout = pango_layout_new(context);
-
-    visible_height = tree_view_get_visible_height(GTK_TREE_VIEW(widget));
-
-    /* draw the title */
-    tmp = g_strdup_printf("<b><big>%s</big></b>\n<small>%s</small>",
-			  shell->selected->name,
-			  shell->selected->notefunc(shell->selected->
-						    number));
-    pango_layout_set_markup(layout, tmp, -1);
-    pango_layout_set_width(layout, widget->allocation.width * PANGO_SCALE);
-    pango_layout_set_alignment(layout, PANGO_ALIGN_CENTER);
-    pango_layout_get_pixel_extents(layout, NULL, &rect);
-
-    w = widget->allocation.width;
-    h = visible_height + rect.height;
-
-    pm = gdk_pixmap_new(widget->window, w, rect.height, -1);
-    gdk_draw_rectangle(GDK_DRAWABLE(pm), gc, TRUE, 0, 0, w, rect.height);
-    gdk_draw_layout_with_colors(GDK_DRAWABLE(pm), gc, 0, 0, layout,
-				&white, &black);
-
-    /* copy the pixmap from the treeview and from the title */
-    pb = gdk_pixbuf_get_from_drawable(NULL,
-				      widget->window,
-				      NULL, 0, 0, 0, 0, w, h);
-    pb = gdk_pixbuf_get_from_drawable(pb,
-				      pm,
-				      NULL,
-				      0, 0,
-				      0, visible_height, w, rect.height);
-
-    /* save the pixbuf to a png file */
-    gdk_pixbuf_save(pb, filename, "png", NULL,
-		    "compression", "9",
-		    "tEXt::hardinfo::version", VERSION,
-		    "tEXt::hardinfo::arch", ARCH, NULL);
-
-    /* unref */
-    g_object_unref(pb);
-    g_object_unref(layout);
-    g_object_unref(pm);
-    g_object_unref(gc);
-    g_free(tmp);
-
-    gtk_widget_set_sensitive(widget, tv_enabled);
-}
-
 static gboolean __idle_free_do(gpointer ptr)
 {
     g_free(ptr);
@@ -1135,7 +1059,7 @@ gchar *module_entry_get_field(ShellModuleEntry * module_entry, gchar * field)
    if (module_entry->fieldfunc) {
    	return module_entry->fieldfunc(field);
    }
-   
+
    return NULL;
 }
 
@@ -1241,14 +1165,14 @@ h_sysfs_read_float(gchar *endpoint, gchar *entry)
 {
 	gchar *tmp, *buffer;
 	gfloat return_value = 0.0f;
-	
+
 	tmp = g_build_filename(endpoint, entry, NULL);
 	if (g_file_get_contents(tmp, &buffer, NULL, NULL))
 		return_value = atof(buffer);
-	
+
 	g_free(tmp);
 	g_free(buffer);
-	
+
 	return return_value;
 }
 
@@ -1257,14 +1181,14 @@ h_sysfs_read_int(gchar *endpoint, gchar *entry)
 {
 	gchar *tmp, *buffer;
 	gint return_value = 0;
-	
+
 	tmp = g_build_filename(endpoint, entry, NULL);
 	if (g_file_get_contents(tmp, &buffer, NULL, NULL))
 		return_value = atoi(buffer);
-	
+
 	g_free(tmp);
 	g_free(buffer);
-	
+
 	return return_value;
 }
 
@@ -1272,18 +1196,18 @@ gchar *
 h_sysfs_read_string(gchar *endpoint, gchar *entry)
 {
 	gchar *tmp, *return_value;
-	
+
 	tmp = g_build_filename(endpoint, entry, NULL);
 	if (!g_file_get_contents(tmp, &return_value, NULL, NULL)) {
 		g_free(return_value);
-		
+
 		return_value = NULL;
 	} else {
 		return_value = g_strstrip(return_value);
 	}
-	
+
 	g_free(tmp);
-	
+
 	return return_value;
 }
 
@@ -1319,7 +1243,7 @@ moreinfo_add_with_prefix(gchar *prefix, gchar *key, gchar *value)
 		DEBUG("moreinfo not initialized");
 		return;
 	}
-	
+
 	if (prefix) {
 		gchar *hashkey = g_strconcat(prefix, ":", key, NULL);
 		g_hash_table_insert(_moreinfo, hashkey, value);
@@ -1348,7 +1272,7 @@ moreinfo_del_with_prefix(gchar *prefix)
 		DEBUG("moreinfo not initialized");
 		return;
 	}
-	
+
 	g_hash_table_foreach_remove(_moreinfo, _moreinfo_del_cb, prefix);
 }
 
@@ -1369,7 +1293,7 @@ moreinfo_lookup_with_prefix(gchar *prefix, gchar *key)
 		DEBUG("moreinfo not initialized");
 		return 0;
 	}
-	
+
 	if (prefix) {
 		gchar *lookup_key = g_strconcat(prefix, ":", key, NULL);
 		gchar *result = g_hash_table_lookup(_moreinfo, lookup_key);
@@ -1384,4 +1308,74 @@ gchar *
 moreinfo_lookup(gchar *key)
 {
 	return moreinfo_lookup_with_prefix(NULL, key);
+}
+
+#if !GLIB_CHECK_VERSION(2,44,0)
+gboolean g_strv_contains(const gchar * const * strv, const gchar *str) {
+    /* g_strv_contains() requires glib>2.44
+     * fallback for older versions */
+    gint i = 0;
+    while(strv[i] != NULL) {
+        if (g_strcmp0(strv[i], str) == 0)
+            return 1;
+        i++;
+    }
+    return 0;
+}
+#endif
+
+/* Hardinfo labels that have # are truncated and/or hidden.
+ * Labels can't have $ because that is the delimiter in
+ * moreinfo. */
+gchar *hardinfo_clean_label(const gchar *v, int replacing) {
+    gchar *clean, *p;
+
+    p = clean = g_strdup(v);
+    while (*p != 0) {
+        switch(*p) {
+            case '#': case '$':
+                *p = '_';
+                break;
+            default:
+                break;
+        }
+        p++;
+    }
+    if (replacing)
+        g_free((gpointer)v);
+    return clean;
+}
+
+/* hardinfo uses the values as {ht,x}ml, apparently */
+gchar *hardinfo_clean_value(const gchar *v, int replacing) {
+    gchar *clean, *tmp;
+    gchar **vl;
+    if (v == NULL) return NULL;
+
+    vl = g_strsplit(v, "&", -1);
+    if (g_strv_length(vl) > 1)
+        clean = g_strjoinv("&amp;", vl);
+    else
+        clean = g_strdup(v);
+    g_strfreev(vl);
+
+    vl = g_strsplit(clean, "<", -1);
+    if (g_strv_length(vl) > 1) {
+        tmp = g_strjoinv("&lt;", vl);
+        g_free(clean);
+        clean = tmp;
+    }
+    g_strfreev(vl);
+
+    vl = g_strsplit(clean, ">", -1);
+    if (g_strv_length(vl) > 1) {
+        tmp = g_strjoinv("&gt;", vl);
+        g_free(clean);
+        clean = tmp;
+    }
+    g_strfreev(vl);
+
+    if (replacing)
+        g_free((gpointer)v);
+    return clean;
 }

@@ -16,13 +16,14 @@
  *    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301 USA
  */
 
+#include <config.h>
+#include <gtk/gtk.h>
+#include <stdarg.h>
 #include <stdlib.h>
 #include <string.h>
-#include <gtk/gtk.h>
-#include <config.h>
-#include <time.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <time.h>
 
 #include <hardinfo.h>
 #include <iconcache.h>
@@ -32,20 +33,25 @@
 
 #include "computer.h"
 
+#include "dmi_util.h" /* for dmi_get_str() */
+#include "dt_util.h" /* for dtr_get_string() */
+
+#include "info.h"
+
 /* Callbacks */
-gchar *callback_summary();
-gchar *callback_os();
-gchar *callback_modules();
-gchar *callback_boots();
-gchar *callback_locales();
-gchar *callback_fs();
-gchar *callback_display();
-gchar *callback_network();
-gchar *callback_users();
-gchar *callback_groups();
-gchar *callback_env_var();
+gchar *callback_summary(void);
+gchar *callback_os(void);
+gchar *callback_modules(void);
+gchar *callback_boots(void);
+gchar *callback_locales(void);
+gchar *callback_fs(void);
+gchar *callback_display(void);
+gchar *callback_network(void);
+gchar *callback_users(void);
+gchar *callback_groups(void);
+gchar *callback_env_var(void);
 #if GLIB_CHECK_VERSION(2,14,0)
-gchar *callback_dev();
+gchar *callback_dev(void);
 #endif /* GLIB_CHECK_VERSION(2,14,0) */
 
 /* Scan callbacks */
@@ -81,6 +87,7 @@ static ModuleEntry entries[] = {
     {NULL},
 };
 
+
 gchar *module_list = NULL;
 Computer *computer = NULL;
 
@@ -89,7 +96,7 @@ gchar *hi_more_info(gchar * entry)
     gchar *info = moreinfo_lookup_with_prefix("COMP", entry);
 
     if (info)
-	return g_strdup(info);
+        return g_strdup(info);
 
     return g_strdup_printf("[%s]", entry);
 }
@@ -99,22 +106,22 @@ gchar *hi_get_field(gchar * field)
     gchar *tmp;
 
     if (g_str_equal(field, _("Memory"))) {
-	MemoryInfo *mi = computer_get_memory();
-	tmp = g_strdup_printf(_("%dMB (%dMB used)"), mi->total, mi->used);
-	g_free(mi);
+        MemoryInfo *mi = computer_get_memory();
+        tmp = g_strdup_printf(_("%dMB (%dMB used)"), mi->total, mi->used);
+        g_free(mi);
     } else if (g_str_equal(field, _("Uptime"))) {
-	tmp = computer_get_formatted_uptime();
+        tmp = computer_get_formatted_uptime();
     } else if (g_str_equal(field, _("Date/Time"))) {
-	time_t t = time(NULL);
+        time_t t = time(NULL);
 
-	tmp = g_new0(gchar, 64);
-	strftime(tmp, 64, "%c", localtime(&t));
+        tmp = g_new0(gchar, 64);
+        strftime(tmp, 64, "%c", localtime(&t));
     } else if (g_str_equal(field, _("Load Average"))) {
-	tmp = computer_get_formatted_loadavg();
+        tmp = computer_get_formatted_loadavg();
     } else if (g_str_equal(field, _("Available entropy in /dev/random"))) {
-	tmp = computer_get_entropy_avail();
+        tmp = computer_get_entropy_avail();
     } else {
-	tmp = g_strdup_printf("Unknown field: %s", field);
+        tmp = g_strdup_printf("Unknown field: %s", field);
     }
     return tmp;
 }
@@ -189,7 +196,7 @@ static gchar *dev_list = NULL;
 void scan_dev(gboolean reload)
 {
     SCAN_START();
-    
+
     int i;
     struct {
        gchar *compiler_name;
@@ -198,8 +205,13 @@ void scan_dev(gboolean reload)
        gboolean stdout;
     } detect_lang[] = {
        { N_("Scripting Languages"), NULL, FALSE },
-       { N_("CPython"), "python -V", "\\d+\\.\\d+\\.\\d+", TRUE },
+       { N_("Gambas3 (gbr3)"), "gbr3 --version", "\\d+\\.\\d+\\.\\d+", TRUE },
+       { N_("Python"), "python -V", "\\d+\\.\\d+\\.\\d+", FALSE },
+       { N_("Python2"), "python2 -V", "\\d+\\.\\d+\\.\\d+", FALSE },
+       { N_("Python3"), "python3 -V", "\\d+\\.\\d+\\.\\d+", TRUE },
        { N_("Perl"), "perl -v", "\\d+\\.\\d+\\.\\d+", TRUE },
+       { N_("Perl6 (VM)"), "perl6 -v", "(?<=This is ).*", TRUE },
+       { N_("Perl6"), "perl6 -v", "(?<=implementing Perl )\\w*\\.\\w*", TRUE },
        { N_("PHP"), "php --version", "\\d+\\.\\d+\\.\\S+", TRUE},
        { N_("Ruby"), "ruby --version", "\\d+\\.\\d+\\.\\d+", TRUE },
        { N_("Bash"), "bash --version", "\\d+\\.\\d+\\.\\S+", TRUE},
@@ -207,6 +219,7 @@ void scan_dev(gboolean reload)
        { N_("C (GCC)"), "gcc -v", "\\d+\\.\\d+\\.\\d+", FALSE },
        { N_("C (Clang)"), "clang -v", "\\d+\\.\\d+", FALSE },
        { N_("D (dmd)"), "dmd --help", "\\d+\\.\\d+", TRUE },
+       { N_("Gambas3 (gbc3)"), "gbc3 --version", "\\d+\\.\\d+\\.\\d+", TRUE },
        { N_("Java"), "javac -version", "\\d+\\.\\d+\\.\\d+", FALSE },
        { N_("CSharp (Mono, old)"), "mcs --version", "\\d+\\.\\d+\\.\\d+\\.\\d+", TRUE },
        { N_("CSharp (Mono)"), "gmcs --version", "\\d+\\.\\d+\\.\\d+\\.\\d+", TRUE },
@@ -216,36 +229,38 @@ void scan_dev(gboolean reload)
        { N_("Go"), "go version", "\\d+\\.\\d+\\.?\\d* ", TRUE },
        { N_("Tools"), NULL, FALSE },
        { N_("make"), "make --version", "\\d+\\.\\d+", TRUE },
-       { N_("GDB"), "gdb --version", "\\d+\\.\\S+", TRUE },
+       { N_("GDB"), "gdb --version", "(?<=^GNU gdb ).*", TRUE },
        { N_("strace"), "strace -V", "\\d+\\.\\d+\\.?\\d*", TRUE },
        { N_("valgrind"), "valgrind --version", "\\d+\\.\\d+\\.\\S+", TRUE },
        { N_("QMake"), "qmake --version", "\\d+\\.\\S+", TRUE},
        { N_("CMake"), "cmake --version", "\\d+\\.\\d+\\.?\\d*", TRUE},
+       { N_("Gambas3 IDE"), "gambas3 --version", "\\d+\\.\\d+\\.\\d+", TRUE },
     };
-    
+
     g_free(dev_list);
-    
+
     dev_list = g_strdup("");
-    
+
     for (i = 0; i < G_N_ELEMENTS(detect_lang); i++) {
        gchar *version = NULL;
-       gchar *output;
+       gchar *output, *ignored;
        gchar *temp;
        GRegex *regex;
        GMatchInfo *match_info;
        gboolean found;
-       
+
        if (!detect_lang[i].regex) {
-            dev_list = h_strdup_cprintf("[%s]\n", dev_list, detect_lang[i].compiler_name);
+            dev_list = h_strdup_cprintf("[%s]\n", dev_list, _(detect_lang[i].compiler_name));
             continue;
        }
-       
+
        if (detect_lang[i].stdout) {
-            found = g_spawn_command_line_sync(detect_lang[i].version_command, &output, NULL, NULL, NULL);
+            found = g_spawn_command_line_sync(detect_lang[i].version_command, &output, &ignored, NULL, NULL);
        } else {
-            found = g_spawn_command_line_sync(detect_lang[i].version_command, NULL, &output, NULL, NULL);
+            found = g_spawn_command_line_sync(detect_lang[i].version_command, &ignored, &output, NULL, NULL);
        }
-       
+       g_free(ignored);
+
        if (found) {
            regex = g_regex_new(detect_lang[i].regex, 0, 0, NULL);
 
@@ -253,41 +268,110 @@ void scan_dev(gboolean reload)
            if (g_match_info_matches(match_info)) {
                version = g_match_info_fetch(match_info, 0);
            }
-           
+
            g_match_info_free(match_info);
            g_regex_unref(regex);
            g_free(output);
        }
-       
-       if (version) {
-           dev_list = h_strdup_cprintf("%s=%s\n", dev_list, detect_lang[i].compiler_name, version);
-           g_free(version);
-       } else {
-           dev_list = h_strdup_cprintf(_("%s=Not found\n"), dev_list, detect_lang[i].compiler_name);
-       }
-       
+
+       if (version == NULL)
+           version = strdup(_("Not found"));
+
+       dev_list = h_strdup_cprintf("%s=%s\n", dev_list, detect_lang[i].compiler_name, version);
+       g_free(version);
+
        temp = g_strdup_printf(_("Detecting version: %s"),
                               detect_lang[i].compiler_name);
        shell_status_update(temp);
        g_free(temp);
     }
-    
+
     SCAN_END();
 }
 
-gchar *callback_dev()
+gchar *callback_dev(void)
 {
-    return g_strdup_printf(_("[$ShellParam$]\n"
-			   "ColumnTitle$TextValue=Program\n"
-			   "ColumnTitle$Value=Version\n"
-			   "ShowColumnHeaders=true\n"
-                           "%s"), dev_list);
+    return g_strdup_printf(
+                "[$ShellParam$]\n"
+                "ColumnTitle$TextValue=%s\n" /* Program */
+                "ColumnTitle$Value=%s\n" /* Version */
+                "ShowColumnHeaders=true\n"
+                "%s",
+                _("Program"), _("Version"),
+                dev_list);
 }
 #endif /* GLIB_CHECK_VERSION(2,14,0) */
 
+static gchar *detect_machine_type(void)
+{
+    GDir *dir;
+    gchar *chassis;
+
+    chassis = dmi_chassis_type_str(-1, 0);
+    if (chassis)
+        return chassis;
+
+    chassis = dtr_get_string("/model", 0);
+    if (chassis) {
+        if (strstr(chassis, "Raspberry Pi") != NULL
+            || strstr(chassis, "ODROID") != NULL
+            /* FIXME: consider making a table when adding more models */ ) {
+                g_free(chassis);
+                return g_strdup(_("Single-board computer"));
+        }
+        g_free(chassis);
+    }
+
+    if (g_file_test("/proc/pmu/info", G_FILE_TEST_EXISTS))
+        return g_strdup(_("Laptop"));
+
+    dir = g_dir_open("/proc/acpi/battery", 0, NULL);
+    if (dir) {
+        const gchar *name = g_dir_read_name(dir);
+
+        g_dir_close(dir);
+
+        if (name)
+            return g_strdup(_("Laptop"));
+    }
+
+    dir = g_dir_open("/sys/class/power_supply", 0, NULL);
+    if (dir) {
+        const gchar *name;
+
+        while ((name = g_dir_read_name(dir))) {
+            gchar *contents;
+            gchar type[PATH_MAX];
+            int r;
+
+            r = snprintf(type, sizeof(type), "%s/%s/type",
+                         "/sys/class/power_supply", name);
+            if (r < 0 || r > PATH_MAX)
+                continue;
+
+            if (g_file_get_contents(type, &contents, NULL, NULL)) {
+                if (g_str_has_prefix(contents, "Battery")) {
+                    g_free(contents);
+                    g_dir_close(dir);
+
+                    return g_strdup(_("Laptop"));
+                }
+
+                g_free(contents);
+            }
+        }
+
+        g_dir_close(dir);
+    }
+
+    /* FIXME: check if batteries are found using /proc/apm */
+
+    return g_strdup(_("Unknown physical machine type"));
+}
+
 /* Table based off imvirt by Thomas Liske <liske@ibh.de>
    Copyright (c) 2008 IBH IT-Service GmbH under GPLv2. */
-gchar *computer_get_virtualization()
+gchar *computer_get_virtualization(void)
 {
     gboolean found = FALSE;
     gint i, j;
@@ -302,40 +386,48 @@ gchar *computer_get_virtualization()
         gchar *vmtype;
     } vm_types[] = {
         /* VMware */
-        { "VMware", "Virtual (VMware)" },
-        { ": VMware Virtual IDE CDROM Drive", "Virtual (VMware)" },
+        { "VMware", N_("Virtual (VMware)") },
+        { ": VMware Virtual IDE CDROM Drive", N_("Virtual (VMware)") },
         /* QEMU */
-        { "QEMU", "Virtual (QEMU)" },
-        { "QEMU Virtual CPU", "Virtual (QEMU)" },
-        { ": QEMU HARDDISK", "Virtual (QEMU)" },
-        { ": QEMU CD-ROM", "Virtual (QEMU)" },
+        { "QEMU", N_("Virtual (QEMU)") },
+        { "QEMU Virtual CPU", N_("Virtual (QEMU)") },
+        { ": QEMU HARDDISK", N_("Virtual (QEMU)") },
+        { ": QEMU CD-ROM", N_("Virtual (QEMU)") },
         /* Generic Virtual Machine */
-        { ": Virtual HD,", "Virtual (Unknown)" },
-        { ": Virtual CD,", "Virtual (Unknown)" },
+        { ": Virtual HD,", N_("Virtual (Unknown)") },
+        { ": Virtual CD,", N_("Virtual (Unknown)") },
         /* Virtual Box */
-        { "VBOX", "Virtual (VirtualBox)" },
-        { ": VBOX HARDDISK", "Virtual (VirtualBox)" },
-        { ": VBOX CD-ROM", "Virtual (VirtualBox)" },
+        { "VBOX", N_("Virtual (VirtualBox)") },
+        { ": VBOX HARDDISK", N_("Virtual (VirtualBox)") },
+        { ": VBOX CD-ROM", N_("Virtual (VirtualBox)") },
         /* Xen */
-        { "Xen virtual console", "Virtual (Xen)" },
-        { "Xen reported: ", "Virtual (Xen)" },
-        { "xen-vbd: registered block device", "Virtual (Xen)" },
+        { "Xen virtual console", N_("Virtual (Xen)") },
+        { "Xen reported: ", N_("Virtual (Xen)") },
+        { "xen-vbd: registered block device", N_("Virtual (Xen)") },
         /* Generic */
-        { " hypervisor", "Virtual (hypervisor present)"} ,
+        { " hypervisor", N_("Virtual (hypervisor present)") } ,
         { NULL }
     };
-    
+    gchar *tmp;
+
     DEBUG("Detecting virtual machine");
 
     if (g_file_test("/proc/xen", G_FILE_TEST_EXISTS)) {
          DEBUG("/proc/xen found; assuming Xen");
-         return g_strdup("Xen");
+         return g_strdup(_("Virtual (Xen)"));
     }
-    
+
+    tmp = module_call_method("devices::getMotherboard");
+    if (strstr(tmp, "VirtualBox") != NULL) {
+        g_free(tmp);
+        return g_strdup(_("Virtual (VirtualBox)"));
+    }
+    g_free(tmp);
+
     for (i = 0; files[i+1]; i++) {
          gchar buffer[512];
          FILE *file;
-         
+
          if ((file = fopen(files[i], "r"))) {
               while (!found && fgets(buffer, 512, file)) {
                   for (j = 0; vm_types[j+1].str; j++) {
@@ -345,200 +437,191 @@ gchar *computer_get_virtualization()
                       }
                   }
               }
-              
+
               fclose(file);
-              
+
               if (found) {
                   DEBUG("%s found (by reading file %s)",
                         vm_types[j].vmtype, files[i]);
-                  return g_strdup(vm_types[j].vmtype);
+                  return g_strdup(_(vm_types[j].vmtype));
               }
          }
-         
+
     }
-    
+
     DEBUG("no virtual machine detected; assuming physical machine");
-    
-    return g_strdup(_("Physical machine"));
+
+    return detect_machine_type();
 }
 
-gchar *callback_summary()
+gchar *callback_summary(void)
 {
-    gchar *processor_name, *alsa_cards;
-    gchar *input_devices, *printers;
-    gchar *storage_devices, *summary;
-    gchar *virt;
-    
-    processor_name  = module_call_method("devices::getProcessorName");
-    alsa_cards      = computer_get_alsacards(computer);
-    input_devices   = module_call_method("devices::getInputDevices");
-    printers        = module_call_method("devices::getPrinters");
-    storage_devices = module_call_method("devices::getStorageDevices");
-    virt            = computer_get_virtualization();
+    struct Info *info = info_new();
 
-    summary = g_strdup_printf(_("[$ShellParam$]\n"
-			      "UpdateInterval$Memory=1000\n"
-			      "UpdateInterval$Date/Time=1000\n"
-			      "#ReloadInterval=5000\n"
-			      "[Computer]\n"
-			      "Processor=%s\n"
-			      "Memory=...\n"
-			      "Machine Type=%s\n"
-			      "Operating System=%s\n"
-			      "User Name=%s\n"
-			      "Date/Time=...\n"
-			      "[Display]\n"
-			      "Resolution=%dx%d pixels\n"
-			      "OpenGL Renderer=%s\n"
-			      "X11 Vendor=%s\n"
-			      "\n%s\n"
-			      "[Input Devices]\n%s\n"
-			      "\n%s\n"
-			      "\n%s\n"),
-			      processor_name,
-			      virt,
-			      computer->os->distro,
-			      computer->os->username,
-			      computer->display->width,
-			      computer->display->height,
-			      computer->display->ogl_renderer,
-			      computer->display->vendor,
-			      alsa_cards,
-			      input_devices, printers, storage_devices);
+    info_add_group(info, _("Computer"),
+        info_field_printf(_("Processor"), "%s",
+            module_call_method("devices::getProcessorName")),
+        info_field_update(_("Memory"), 1000),
+        info_field_printf(_("Machine Type"), "%s",
+            computer_get_virtualization()),
+        info_field(_("Operating System"), computer->os->distro),
+        info_field(_("User Name"), computer->os->username),
+        info_field_update(_("Date/Time"), 1000),
+        info_field_last());
 
-    g_free(processor_name);
-    g_free(alsa_cards);
-    g_free(input_devices);
-    g_free(printers);
-    g_free(storage_devices);
-    g_free(virt);
+    info_add_group(info, _("Display"),
+        info_field_printf(_("Resolution"), _(/* label for resolution */ "%dx%d pixels"),
+            computer->display->width, computer->display->height),
+        info_field(_("OpenGL Renderer"), computer->display->ogl_renderer),
+        info_field(_("X11 Vendor"), computer->display->vendor),
+        info_field_last());
 
-    return summary;
+    info_add_computed_group(info, _("Audio Devices"),
+        idle_free(computer_get_alsacards(computer)));
+    info_add_computed_group(info, _("Input Devices"),
+        idle_free(module_call_method("devices::getInputDevices")));
+    info_add_computed_group(info, NULL, /* getPrinters provides group headers */
+        idle_free(module_call_method("devices::getPrinters")));
+    info_add_computed_group(info, NULL,  /* getStorageDevices provides group headers */
+        idle_free(module_call_method("devices::getStorageDevices")));
+
+    return info_flatten(info);
 }
 
-gchar *callback_os()
+gchar *callback_os(void)
 {
-    return g_strdup_printf(_("[$ShellParam$]\n"
-			   "UpdateInterval$Uptime=10000\n"
-			   "UpdateInterval$Load Average=1000\n"
-			   "UpdateInterval$Available entropy in /dev/random=1000\n"
-			   "[Version]\n"
-			   "Kernel=%s\n"
-			   "Version=%s\n"
-			   "C Library=%s\n"
-			   "Distribution=%s\n"
-			   "[Current Session]\n"
-			   "Computer Name=%s\n"
-			   "User Name=%s\n"
-			   "#Language=%s\n"
-			   "Home Directory=%s\n"
-			   "Desktop Environment=%s\n"
-			   "[Misc]\n"
-			   "Uptime=...\n"
-			   "Load Average=...\n"
-			   "Available entropy in /dev/random=..."),
-			   computer->os->kernel,
-			   computer->os->kernel_version,
-			   computer->os->libc,
-			   computer->os->distro,
-			   computer->os->hostname,
-			   computer->os->username,
-			   computer->os->language,
-			   computer->os->homedir, computer->os->desktop,
-			   computer->os->entropy_avail);
+    struct Info *info = info_new();
+
+    info_add_group(info, _("Version"),
+        info_field(_("Kernel"), computer->os->kernel),
+        info_field(_("Version"), computer->os->kernel_version),
+        info_field(_("C Library"), computer->os->libc),
+        info_field(_("Distribution"), computer->os->distro),
+        info_field_last());
+
+    info_add_group(info, _("Current Session"),
+        info_field(_("Computer Name"), computer->os->hostname),
+        info_field(_("User Name"), computer->os->username),
+        info_field(_("Language"), computer->os->language),
+        info_field(_("Home Directory"), computer->os->homedir),
+        info_field_last());
+
+    info_add_group(info, _("Misc"),
+        info_field_update(_("Uptime"), 1000),
+        info_field_update(_("Load Average"), 10000),
+        info_field_update(_("Available entropy in /dev/random"), 1000),
+        info_field_last());
+
+    return info_flatten(info);
 }
 
-gchar *callback_modules()
+gchar *callback_modules(void)
 {
-    return g_strdup_printf(_("[Loaded Modules]\n"
-			   "%s"
-			   "[$ShellParam$]\n"
-			   "ViewType=1\n"
-			   "ColumnTitle$TextValue=Name\n"
-			   "ColumnTitle$Value=Description\n"
-			   "ShowColumnHeaders=true\n"), module_list);
+    struct Info *info = info_new();
+
+    info_add_computed_group(info, _("Loaded Modules"), module_list);
+
+    info_set_column_title(info, "TextValue", _("Name"));
+    info_set_column_title(info, "Value", _("Description"));
+    info_set_column_headers_visible(info, TRUE);
+    info_set_view_type(info, SHELL_VIEW_DUAL);
+
+    return info_flatten(info);
 }
 
-gchar *callback_boots()
+gchar *callback_boots(void)
 {
-    return g_strdup_printf(_("[$ShellParam$]\n"
-			   "ColumnTitle$TextValue=Date & Time\n"
-			   "ColumnTitle$Value=Kernel Version\n"
-			   "ShowColumnHeaders=true\n"
-			   "\n"
-			   "%s"), computer->os->boots);
+    struct Info *info = info_new();
+
+    info_add_computed_group(info, _("Boots"), computer->os->boots);
+
+    info_set_column_title(info, "TextValue", _("Date & Time"));
+    info_set_column_title(info, "Value", _("Kernel Version"));
+    info_set_column_headers_visible(info, TRUE);
+
+    return info_flatten(info);
 }
 
-gchar *callback_locales()
+gchar *callback_locales(void)
 {
-    return g_strdup_printf(_("[$ShellParam$]\n"
-			   "ViewType=1\n"
-			   "ColumnTitle$TextValue=Language Code\n"
-			   "ColumnTitle$Value=Name\n"
-			   "ShowColumnHeaders=true\n"
-			   "[Available Languages]\n"
-			   "%s"), computer->os->languages);
+    struct Info *info = info_new();
+
+    info_add_computed_group(info, _("Available Languages"), computer->os->languages);
+
+    info_set_column_title(info, "TextValue", _("Language Code"));
+    info_set_column_title(info, "Value", _("Name"));
+    info_set_view_type(info, SHELL_VIEW_DUAL);
+    info_set_column_headers_visible(info, TRUE);
+
+    return info_flatten(info);
 }
 
-gchar *callback_fs()
+gchar *callback_fs(void)
 {
-    return g_strdup_printf(_("[$ShellParam$]\n"
-			   "ViewType=4\n"
-			   "ReloadInterval=5000\n"
-			   "Zebra=1\n"
-			   "NormalizePercentage=false\n"
-			   "ColumnTitle$Extra1=Mount Point\n"
-			   "ColumnTitle$Progress=Usage\n"
-			   "ColumnTitle$TextValue=Device\n"
-			   "ShowColumnHeaders=true\n"
-			   "[Mounted File Systems]\n%s\n"), fs_list);
+    struct Info *info = info_new();
+
+    info_add_computed_group(info, _("Mounted File Systems"), fs_list);
+
+    info_set_column_title(info, "Extra1", _("Mount Point"));
+    info_set_column_title(info, "Progress", _("Usage"));
+    info_set_column_title(info, "TextValue", _("Device"));
+    info_set_column_headers_visible(info, TRUE);
+    info_set_view_type(info, SHELL_VIEW_PROGRESS_DUAL);
+    info_set_zebra_visible(info, TRUE);
+    info_set_normalize_percentage(info, FALSE);
+
+    return info_flatten(info);
 }
 
-gchar *callback_display()
+gchar *callback_display(void)
 {
-    return g_strdup_printf(_("[Display]\n"
-			   "Resolution=%dx%d pixels\n"
-			   "Vendor=%s\n"
-			   "Version=%s\n"
-			   "[Monitors]\n"
-			   "%s"
-			   "[Extensions]\n"
-			   "%s"
-			   "[OpenGL]\n"
-			   "Vendor=%s\n"
-			   "Renderer=%s\n"
-			   "Version=%s\n"
-			   "Direct Rendering=%s\n"),
-			   computer->display->width,
-			   computer->display->height,
-			   computer->display->vendor,
-			   computer->display->version,
-			   computer->display->monitors,
-			   computer->display->extensions,
-			   computer->display->ogl_vendor,
-			   computer->display->ogl_renderer,
-			   computer->display->ogl_version,
-			   computer->display->dri ? _("Y_es") : _("No"));
+    struct Info *info = info_new();
+
+    info_add_group(info, _("Display"),
+        info_field_printf(_("Resolution"), _(/* resolution WxH unit */ "%dx%d pixels"),
+                computer->display->width, computer->display->height),
+        info_field(_("Vendor"), computer->display->vendor),
+        info_field(_("Version"), computer->display->version),
+        info_field_last());
+
+    info_add_computed_group(info, _("Monitors"), computer->display->monitors);
+
+    info_add_group(info, _("OpenGL"),
+        info_field(_("Vendor"), computer->display->ogl_vendor),
+        info_field(_("Renderer"), computer->display->ogl_renderer),
+        info_field(_("Version"), computer->display->ogl_version),
+        info_field(_("Direct Rendering"),
+            computer->display->dri ? _("Yes") : _("No")),
+        info_field_last());
+
+    info_add_computed_group(info, _("Extensions"), computer->display->extensions);
+
+    return info_flatten(info);
 }
 
-gchar *callback_users()
+gchar *callback_users(void)
 {
-    return g_strdup_printf("[$ShellParam$]\n"
-			   "ReloadInterval=10000\n"
-			   "ViewType=1\n"
-			   "[Users]\n"
-			   "%s\n", users);
+    struct Info *info = info_new();
+
+    info_add_computed_group(info, _("Users"), users);
+    info_set_view_type(info, SHELL_VIEW_DUAL);
+    info_set_reload_interval(info, 10000);
+
+    return info_flatten(info);
 }
 
-gchar *callback_groups()
+gchar *callback_groups(void)
 {
-    return g_strdup_printf(_("[$ShellParam$]\n"
-			   "ReloadInterval=10000\n"
-			   "ColumnTitle$TextValue=Name\n"
-			   "ColumnTitle$Value=Group ID\n"
-			   "ShowColumnHeaders=true\n"
-			   "[Groups]\n"
-			   "%s\n"), groups);
+    struct Info *info = info_new();
+
+    info_add_computed_group(info, _("Group"), groups);
+
+    info_set_column_title(info, "TextValue", _("Name"));
+    info_set_column_title(info, "Value", _("Group ID"));
+    info_set_column_headers_visible(info, TRUE);
+    info_set_reload_interval(info, 10000);
+
+    return info_flatten(info);
 }
 
 gchar *get_os_kernel(void)
@@ -551,6 +634,13 @@ gchar *get_os(void)
 {
     scan_os(FALSE);
     return g_strdup(computer->os->distro);
+}
+
+gchar *get_ogl_renderer(void)
+{
+    scan_display(FALSE);
+
+    return g_strdup(computer->display->ogl_renderer);
 }
 
 gchar *get_display_summary(void)
@@ -569,16 +659,16 @@ gchar *get_display_summary(void)
 gchar *get_kernel_module_description(gchar *module)
 {
     gchar *description;
-    
+
     if (!_module_hash_table) {
         scan_modules(FALSE);
     }
-    
+
     description = g_hash_table_lookup(_module_hash_table, module);
     if (!description) {
         return NULL;
     }
-    
+
     return g_strdup(description);
 }
 
@@ -587,19 +677,20 @@ gchar *get_audio_cards(void)
     if (!computer->alsa) {
       computer->alsa = computer_get_alsainfo();
     }
-    
+
     return computer_get_alsacards(computer);
 }
 
 ShellModuleMethod *hi_exported_methods(void)
 {
     static ShellModuleMethod m[] = {
-	{"getOSKernel", get_os_kernel},
-	{"getOS", get_os},
-	{"getDisplaySummary", get_display_summary},
-	{"getAudioCards", get_audio_cards},
-	{"getKernelModuleDescription", get_kernel_module_description},
-	{NULL}
+        {"getOSKernel", get_os_kernel},
+        {"getOS", get_os},
+        {"getDisplaySummary", get_display_summary},
+        {"getOGLRenderer", get_ogl_renderer},
+        {"getAudioCards", get_audio_cards},
+        {"getKernelModuleDescription", get_kernel_module_description},
+        {NULL}
     };
 
     return m;
@@ -629,30 +720,34 @@ gchar **hi_module_get_dependencies(void)
 
 gchar *hi_module_get_summary(void)
 {
-    return g_strdup("[Operating System]\n"
+    return g_strdup_printf("[%s]\n"
                     "Icon=os.png\n"
                     "Method=computer::getOS\n"
-                    "[CPU]\n"
+                    "[%s]\n"
                     "Icon=processor.png\n"
-                    "Method=devices::getProcessorName\n"
-                    "[RAM]\n"
+                    "Method=devices::getProcessorNameAndDesc\n"
+                    "[%s]\n"
                     "Icon=memory.png\n"
                     "Method=devices::getMemoryTotal\n"
-                    "[Motherboard]\n"
+                    "[%s]\n"
                     "Icon=module.png\n"
                     "Method=devices::getMotherboard\n"
-                    "[Graphics]\n"
+                    "[%s]\n"
                     "Icon=monitor.png\n"
                     "Method=computer::getDisplaySummary\n"
-                    "[Storage]\n"
+                    "[%s]\n"
                     "Icon=hdd.png\n"
                     "Method=devices::getStorageDevices\n"
-                    "[Printers]\n"
+                    "[%s]\n"
                     "Icon=printer.png\n"
                     "Method=devices::getPrinters\n"
-                    "[Audio]\n"
+                    "[%s]\n"
                     "Icon=audio.png\n"
-                    "Method=computer::getAudioCards\n");
+                    "Method=computer::getAudioCards\n",
+                    _("Operating System"),
+                    _("CPU"), _("RAM"), _("Motherboard"), _("Graphics"),
+                    _("Storage"), _("Printers"), _("Audio")
+                    );
 }
 
 void hi_module_deinit(void)
@@ -672,7 +767,7 @@ void hi_module_deinit(void)
         g_free(computer->os->boots);
         g_free(computer->os);
     }
-    
+
     if (computer->display) {
         g_free(computer->display->ogl_vendor);
         g_free(computer->display->ogl_renderer);
@@ -684,15 +779,15 @@ void hi_module_deinit(void)
         g_free(computer->display->monitors);
         g_free(computer->display);
     }
-    
+
     if (computer->alsa) {
         g_slist_free(computer->alsa->cards);
         g_free(computer->alsa);
     }
-    
+
     g_free(computer->date_time);
     g_free(computer);
-    
+
     moreinfo_del_with_prefix("COMP");
 }
 
@@ -704,11 +799,11 @@ void hi_module_init(void)
 ModuleAbout *hi_module_get_about(void)
 {
     static ModuleAbout ma[] = {
-	{
-	 .author = "Leandro A. F. Pereira",
-	 .description = N_("Gathers high-level computer information"),
-	 .version = VERSION,
-	 .license = "GNU GPL version 2"}
+    {
+     .author = "Leandro A. F. Pereira",
+     .description = N_("Gathers high-level computer information"),
+     .version = VERSION,
+     .license = "GNU GPL version 2"}
     };
 
     return ma;

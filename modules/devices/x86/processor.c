@@ -18,6 +18,10 @@
 
 #include "hardinfo.h"
 #include "devices.h"
+#include "cpu_util.h"
+
+#include "x86_data.h"
+#include "x86_data.c"
 
 /*
  * This function is partly based on x86cpucaps
@@ -148,10 +152,10 @@ static gchar *__cache_get_info_as_string(Processor *processor)
     for (cache_list = processor->cache; cache_list; cache_list = cache_list->next) {
         cache = (ProcessorCache *)cache_list->data;
 
-        result = h_strdup_cprintf("Level %d (%s)=%d-way set-associative, %d sets, %dKB size\n",
+        result = h_strdup_cprintf(_("Level %d (%s)=%d-way set-associative, %d sets, %dKB size\n"),
                                   result,
                                   cache->level,
-                                  cache->type,
+                                  C_("cache-type", cache->type),
                                   cache->ways_of_associativity,
                                   cache->number_of_sets,
                                   cache->size);
@@ -160,11 +164,20 @@ static gchar *__cache_get_info_as_string(Processor *processor)
     return result;
 }
 
-static void __cache_obtain_info(Processor *processor, gint processor_number)
+/* This is not used directly, but creates translatable strings for
+ * the type string returned from /sys/.../cache */
+static const char* cache_types[] = {
+    NC_("cache-type", /*/cache type, as appears in: Level 1 (Data)*/ "Data"),
+    NC_("cache-type", /*/cache type, as appears in: Level 1 (Instruction)*/ "Instruction"),
+    NC_("cache-type", /*/cache type, as appears in: Level 2 (Unified)*/ "Unified")
+};
+
+static void __cache_obtain_info(Processor *processor)
 {
     ProcessorCache *cache;
     gchar *endpoint, *entry, *index;
     gint i;
+    gint processor_number = processor->id;
 
     endpoint = g_strdup_printf("/sys/devices/system/cpu/cpu%d/cache", processor_number);
 
@@ -215,352 +228,144 @@ fail:
 
 GSList *processor_scan(void)
 {
-    GSList *procs = NULL;
+    GSList *procs = NULL, *l = NULL;
     Processor *processor = NULL;
     FILE *cpuinfo;
     gchar buffer[512];
-    gint processor_number = 0;
-    gchar *tmp_bugs;
 
-    cpuinfo = fopen("/proc/cpuinfo", "r");
+    cpuinfo = fopen(PROC_CPUINFO, "r");
     if (!cpuinfo)
-	return NULL;
+        return NULL;
 
     while (fgets(buffer, 512, cpuinfo)) {
-	gchar **tmp = g_strsplit(buffer, ":", 2);
-
-	if (g_str_has_prefix(tmp[0], "processor")) {
-	    if (processor) {
-		get_processor_strfamily(processor);
-		procs = g_slist_append(procs, processor);
-	    }
-
-	    processor = g_new0(Processor, 1);
-
-	    __cache_obtain_info(processor, processor_number++);
-	}
-
-	if (processor && tmp[0] && tmp[1]) {
-	    tmp[0] = g_strstrip(tmp[0]);
-	    tmp[1] = g_strstrip(tmp[1]);
-
-	    get_str("model name", processor->model_name);
-	    get_str("vendor_id", processor->vendor_id);
-	    get_str("flags", processor->flags);
-	    get_str("bugs", processor->bugs);
-	    get_str("power management", processor->pm);
-	    get_int("cache size", processor->cache_size);
-	    get_float("cpu MHz", processor->cpu_mhz);
-	    get_float("bogomips", processor->bogomips);
-
-	    get_str("fpu", processor->has_fpu);
-
-	    get_str("fdiv_bug", processor->bug_fdiv);
-	    get_str("hlt_bug", processor->bug_hlt);
-	    get_str("f00f_bug", processor->bug_f00f);
-	    get_str("coma_bug", processor->bug_coma);
-
-        if (processor->bugs == NULL || g_strcmp0(processor->bugs, "") == 0) {
-            g_free(processor->bugs);
-            /* make bugs list on old kernels that don't offer one */
-            processor->bugs = g_strdup_printf("%s%s%s%s",
-                    processor->bug_fdiv ? "fdiv"  : "",
-                    processor->bug_hlt  ? " _hlt" : "",
-                    processor->bug_f00f ? " f00f" : "",
-                    processor->bug_coma ? " coma" : "");
+        gchar **tmp = g_strsplit(buffer, ":", 2);
+        if (!tmp[1] || !tmp[0]) {
+            g_strfreev(tmp);
+            continue;
         }
 
-	    get_int("model", processor->model);
-	    get_int("cpu family", processor->family);
-	    get_int("stepping", processor->stepping);
+        tmp[0] = g_strstrip(tmp[0]);
+        tmp[1] = g_strstrip(tmp[1]);
 
-	    get_int("processor", processor->id);
-	}
-	g_strfreev(tmp);
-    }
+        if (g_str_has_prefix(tmp[0], "processor")) {
+            /* finish previous */
+            if (processor)
+                procs = g_slist_append(procs, processor);
 
-    if (processor) {
-	get_processor_strfamily(processor);
-	procs = g_slist_append(procs, processor);
+            /* start next */
+            processor = g_new0(Processor, 1);
+            processor->id = atol(tmp[1]);
+            g_strfreev(tmp);
+            continue;
+        }
+
+        if (processor) {
+            get_str("model name", processor->model_name);
+            get_str("vendor_id", processor->vendor_id);
+            get_str("flags", processor->flags);
+            get_str("bugs", processor->bugs);
+            get_str("power management", processor->pm);
+            get_str("microcode", processor->microcode);
+            get_int("cache size", processor->cache_size);
+            get_float("cpu MHz", processor->cpu_mhz);
+            get_float("bogomips", processor->bogomips);
+
+            get_str("fpu", processor->has_fpu);
+
+            get_str("fdiv_bug", processor->bug_fdiv);
+            get_str("hlt_bug", processor->bug_hlt);
+            get_str("f00f_bug", processor->bug_f00f);
+            get_str("coma_bug", processor->bug_coma);
+            /* sep_bug? */
+
+            get_int("model", processor->model);
+            get_int("cpu family", processor->family);
+            get_int("stepping", processor->stepping);
+        }
+        g_strfreev(tmp);
     }
 
     fclose(cpuinfo);
 
+    /* finish last */
+    if (processor)
+        procs = g_slist_append(procs, processor);
+
+    for (l = procs; l; l = l->next) {
+        processor = (Processor *) l->data;
+
+        STRIFNULL(processor->microcode, _("(Not Available)") );
+
+        get_processor_strfamily(processor);
+        __cache_obtain_info(processor);
+
+#define NULLIFNOTYES(f) if (processor->f) if (strcmp(processor->f, "yes") != 0) { g_free(processor->f); processor->f = NULL; }
+        NULLIFNOTYES(bug_fdiv);
+        NULLIFNOTYES(bug_hlt);
+        NULLIFNOTYES(bug_f00f);
+        NULLIFNOTYES(bug_coma);
+
+        if (processor->bugs == NULL || g_strcmp0(processor->bugs, "") == 0) {
+            g_free(processor->bugs);
+            /* make bugs list on old kernels that don't offer one */
+            processor->bugs = g_strdup_printf("%s%s%s%s%s%s%s%s%s%s",
+                    /* the oldest bug workarounds indicated in /proc/cpuinfo */
+                    processor->bug_fdiv ? " fdiv" : "",
+                    processor->bug_hlt  ? " _hlt" : "",
+                    processor->bug_f00f ? " f00f" : "",
+                    processor->bug_coma ? " coma" : "",
+                    /* these bug workarounds were reported as "features" in older kernels */
+                    processor_has_flag(processor->flags, "fxsave_leak")     ? " fxsave_leak" : "",
+                    processor_has_flag(processor->flags, "clflush_monitor") ? " clflush_monitor" : "",
+                    processor_has_flag(processor->flags, "11ap")            ? " 11ap" : "",
+                    processor_has_flag(processor->flags, "tlb_mmatch")      ? " tlb_mmatch" : "",
+                    processor_has_flag(processor->flags, "apic_c1e")        ? " apic_c1e" : "",
+                    ""); /* just to make adding lines easier */
+            g_strchug(processor->bugs);
+        }
+
+        if (processor->pm == NULL || g_strcmp0(processor->pm, "") == 0) {
+            g_free(processor->pm);
+            /* make power management list on old kernels that don't offer one */
+            processor->pm = g_strdup_printf("%s%s",
+                    /* "hw_pstate" -> "hwpstate" */
+                    processor_has_flag(processor->flags, "hw_pstate") ? " hwpstate" : "",
+                    ""); /* just to make adding lines easier */
+            g_strchug(processor->pm);
+        }
+
+        /* topo & freq */
+        processor->cpufreq = cpufreq_new(processor->id);
+        processor->cputopo = cputopo_new(processor->id);
+
+        if (processor->cpufreq->cpukhz_max)
+            processor->cpu_mhz = processor->cpufreq->cpukhz_max / 1000;
+    }
+
     return procs;
 }
 
-/*
- * Sources:
- * - Linux' cpufeature.h
- * - http://gentoo-wiki.com/Cpuinfo
- * - Intel IA-32 Architecture Software Development Manual
- * - https://unix.stackexchange.com/questions/43539/what-do-the-flags-in-proc-cpuinfo-mean
- */
-static struct {
-    char *name, *meaning;
-} flag_meaning[] = {
-	{ "3dnow",	"3DNow! Technology"				},
-	{ "3dnowext",	"Extended 3DNow! Technology"			},
-	{ "fpu",	"Floating Point Unit"				},
-	{ "vme",	"Virtual 86 Mode Extension"			},
-	{ "de",		"Debug Extensions - I/O breakpoints"		},
-	{ "pse",	"Page Size Extensions (4MB pages)"		},
-	{ "tsc",	"Time Stamp Counter and RDTSC instruction"	},
-	{ "msr",	"Model Specific Registers"			},
-	{ "pae",	"Physical Address Extensions"			},
-	{ "mce",	"Machine Check Architeture"			},
-	{ "cx8",	"CMPXCHG8 instruction"				},
-	{ "apic",	"Advanced Programmable Interrupt Controller"	},
-	{ "sep",	"Fast System Call (SYSENTER/SYSEXIT)"		},
-	{ "mtrr",	"Memory Type Range Registers"			},
-	{ "pge",	"Page Global Enable"				},
-	{ "mca",	"Machine Check Architecture"			},
-	{ "cmov",	"Conditional Move instruction"			},
-	{ "pat",	"Page Attribute Table"				},
-	{ "pse36",	"36bit Page Size Extensions"			},
-	{ "psn",	"96 bit Processor Serial Number"		},
-	{ "mmx",	"MMX technology"				},
-	{ "mmxext",	"Extended MMX Technology"			},
-	{ "cflush",	"Cache Flush"					},
-	{ "dtes",	"Debug Trace Store"				},
-	{ "fxsr",	"FXSAVE and FXRSTOR instructions"		},
-	{ "kni",	"Streaming SIMD instructions"			},
-	{ "xmm",	"Streaming SIMD instructions"			},
-	{ "ht",		"HyperThreading"				},
-	{ "mp",		"Multiprocessing Capable"			},
-	{ "sse",	"SSE instructions"				},
-	{ "sse2",	"SSE2 (WNI) instructions"			},
-	{ "acc",	"Automatic Clock Control"			},
-	{ "ia64",	"IA64 Instructions"				},
-	{ "syscall",	"SYSCALL and SYSEXIT instructions"		},
-	{ "nx",		"No-execute Page Protection"			},
-	{ "xd",		"Execute Disable"				},
-	{ "clflush",	"Cache Line Flush instruction"			},
-	{ "acpi",	"Thermal Monitor and Software Controlled Clock"	},
-	{ "dts",	"Debug Store"					},
-	{ "ss",		"Self Snoop"					},
-	{ "tm",		"Thermal Monitor"				},
-	{ "pbe",	"Pending Break Enable"				},
-	{ "pb",		"Pending Break Enable"				},
-	{ "pn",		"Processor serial number"			},
-	{ "ds",		"Debug Store"					},
-	{ "xmm2",	"Streaming SIMD Extensions-2"			},
-	{ "xmm3",	"Streaming SIMD Extensions-3"			},
-	{ "selfsnoop",	"CPU self snoop"				},
-	{ "rdtscp",	"RDTSCP"					},
-	{ "recovery",	"CPU in recovery mode"				},
-	{ "longrun",	"Longrun power control"				},
-	{ "lrti",	"LongRun table interface"			},
-	{ "cxmmx",	"Cyrix MMX extensions"				},
-	{ "k6_mtrr",	"AMD K6 nonstandard MTRRs"			},
-	{ "cyrix_arr",	"Cyrix ARRs (= MTRRs)"				},
-	{ "centaur_mcr","Centaur MCRs (= MTRRs)"			},
-	{ "constant_tsc","TSC ticks at a constant rate"			},
-	{ "up",		"smp kernel running on up"			},
-	{ "fxsave_leak","FXSAVE leaks FOP/FIP/FOP"			},
-	{ "arch_perfmon","Intel Architectural PerfMon"			},
-	{ "pebs",	"Precise-Event Based Sampling"			},
-	{ "bts",	"Branch Trace Store"				},
-	{ "sync_rdtsc",	"RDTSC synchronizes the CPU"			},
-	{ "rep_good",	"rep microcode works well on this CPU"		},
-	{ "mwait",	"Monitor/Mwait support"				},
-	{ "ds_cpl",	"CPL Qualified Debug Store"			},
-	{ "est",	"Enhanced SpeedStep"				},
-	{ "tm2",	"Thermal Monitor 2"				},
-	{ "cid",	"Context ID"					},
-	{ "xtpr",	"Send Task Priority Messages"			},
-	{ "xstore",	"on-CPU RNG present (xstore insn)"		},
-	{ "xstore_en",	"on-CPU RNG enabled"				},
-	{ "xcrypt",	"on-CPU crypto (xcrypt insn)"			},
-	{ "xcrypt_en",	"on-CPU crypto enabled"				},
-	{ "ace2",	"Advanced Cryptography Engine v2"		},
-	{ "ace2_en",	"ACE v2 enabled"				},
-	{ "phe",	"PadLock Hash Engine"				},
-	{ "phe_en",	"PHE enabled"					},
-	{ "pmm",	"PadLock Montgomery Multiplier"			},
-	{ "pmm_en",	"PMM enabled"					},
-	{ "lahf_lm",	"LAHF/SAHF in long mode"			},
-	{ "cmp_legacy",	"HyperThreading not valid"			},
-	{ "lm",		"LAHF/SAHF in long mode"			},
-	{ "ds_cpl",	"CPL Qualified Debug Store"			},
-	{ "vmx",	"Virtualization support (Intel)"		},
-	{ "svm",	"Virtualization support (AMD)"			},
-	{ "est",	"Enhanced SpeedStep"				},
-	{ "tm2",	"Thermal Monitor 2"				},
-	{ "ssse3",	"Supplemental Streaming SIMD Extension 3"	},
-	{ "cx16",	"CMPXCHG16B instruction"			},
-	{ "xptr",	"Send Task Priority Messages"			},
-	{ "pebs",	"Precise Event Based Sampling"			},
-	{ "bts",	"Branch Trace Store"				},
-	{ "ida",	"Intel Dynamic Acceleration"			},
-	{ "arch_perfmon","Intel Architectural PerfMon"			},
-	{ "pni",	"Streaming SIMD Extension 3 (Prescott New Instruction)"	},
-	{ "rep_good",	"rep microcode works well on this CPU"		},
-	{ "ts",		"Thermal Sensor"				},
-	{ "sse3",	"Streaming SIMD Extension 3"			},
-	{ "sse4",	"Streaming SIMD Extension 4"			},
-	{ "tni",	"Tejas New Instruction"				},
-	{ "nni",	"Nehalem New Instruction"			},
-	{ "tpr",	"Task Priority Register"			},
-	{ "vid",	"Voltage Identifier"				},
-	{ "fid", 	"Frequency Identifier"				},
-	{ "dtes64", 	"64-bit Debug Store"				},
-	{ "monitor", 	"Monitor/Mwait support"				},
-	{ "sse4_1",     "Streaming SIMD Extension 4.1"                  },
-	{ "sse4_2",     "Streaming SIMD Extension 4.2"                  },
-	{ "nopl",       "NOPL instructions"                             },
-	{ "cxmmx",      "Cyrix MMX extensions"                          },
-	{ "xtopology",  "CPU topology enum extensions"                  },
-	{ "nonstop_tsc", "TSC does not stop in C states"                },
-	{ "eagerfpu",   "Non lazy FPU restor"                           },
-	{ "pclmulqdq",  "Perform a Carry-Less Multiplication of Quadword instruction" },
-	{ "smx",        "Safer mode: TXT (TPM support)"                 },
-	{ "pdcm",       "Performance capabilities"                      },
-	{ "pcid",       "Process Context Identifiers"                   },
-	{ "x2apic",     "x2APIC"                                        },
-	{ "popcnt",     "Set bit count instructions"                    },
-	{ "aes",        "Advanced Encryption Standard"                  },
-	{ "aes-ni",     "Advanced Encryption Standard (New Instructions)" },
-	{ "xsave",      "Save Processor Extended States"                },
-	{ "avx",        "Advanced Vector Instructions"                  },
-	{ NULL,		NULL						},
-};
-
-static struct {
-    char *name, *meaning;
-} bug_meaning[] = {
-	{ "f00f",        "Intel F00F bug"    },
-	{ "fdiv",        "FPU FDIV"          },
-	{ "coma",        "Cyrix 6x86 coma"   },
-	{ "tlb_mmatch",  "AMD Erratum 383"   },
-	{ "apic_c1e",    "AMD Erratum 400"   },
-	{ "11ap",        "Bad local APIC aka 11AP"  },
-	{ "fxsave_leak", "FXSAVE leaks FOP/FIP/FOP" },
-	{ "clflush_monitor",  "AAI65, CLFLUSH required before MONITOR" },
-	{ "sysret_ss_attrs",  "SYSRET doesn't fix up SS attrs" },
-	{ "espfix",      "IRET to 16-bit SS corrupts ESP/RSP high bits" },
-	{ "null_seg",    "Nulling a selector preserves the base" },         /* see: detect_null_seg_behavior() */
-	{ "swapgs_fence","SWAPGS without input dep on GS" },
-	{ "monitor",     "IPI required to wake up remote CPU" },
-	{ "amd_e400",    "AMD Erratum 400" },
-	{ NULL,		NULL						},
-};
-
-/* from arch/x86/kernel/cpu/powerflags.h */
-static struct {
-    char *name, *meaning;
-} pm_meaning[] = {
-	{ "ts",            "temperature sensor"     },
-	{ "fid",           "frequency id control"   },
-	{ "vid",           "voltage id control"     },
-	{ "ttp",           "thermal trip"           },
-	{ "tm",            "hardware thermal control"   },
-	{ "stc",           "software thermal control"   },
-	{ "100mhzsteps",   "100 MHz multiplier control" },
-	{ "hwpstate",      "hardware P-state control"   },
-/*	{ "",              "tsc invariant mapped to constant_tsc" }, */
-	{ "cpb",           "core performance boost"     },
-	{ "eff_freq_ro",   "Readonly aperf/mperf"       },
-	{ "proc_feedback", "processor feedback interface" },
-	{ "acc_power",     "accumulated power mechanism"  },
-	{ NULL,		NULL						},
-};
-
-GHashTable *cpu_flags = NULL;
-
-static void
-populate_cpu_flags_list_internal(GHashTable *hash_table)
+gchar *processor_get_capabilities_from_flags(gchar *strflags, gchar *lookup_prefix)
 {
-    int i;
-
-    DEBUG("using internal CPU flags database");
-
-    for (i = 0; flag_meaning[i].name != NULL; i++) {
-        g_hash_table_insert(cpu_flags, flag_meaning[i].name,
-                            flag_meaning[i].meaning);
-    }
-    for (i = 0; bug_meaning[i].name != NULL; i++) {
-        g_hash_table_insert(cpu_flags, bug_meaning[i].name,
-                            bug_meaning[i].meaning);
-    }
-    for (i = 0; pm_meaning[i].name != NULL; i++) {
-        g_hash_table_insert(cpu_flags, pm_meaning[i].name,
-                            pm_meaning[i].meaning);
-    }
-}
-
-void cpu_flags_init(void)
-{
-    gint i;
-    gchar *path;
-
-    cpu_flags = g_hash_table_new(g_str_hash, g_str_equal);
-
-    path = g_build_filename(g_get_home_dir(), ".hardinfo", "cpuflags.conf", NULL);
-    if (!g_file_test(path, G_FILE_TEST_EXISTS)) {
-        populate_cpu_flags_list_internal(cpu_flags);
-    } else {
-        GKeyFile *flags_file;
-
-        DEBUG("using %s as CPU flags database", path);
-
-        flags_file = g_key_file_new();
-        if (g_key_file_load_from_file(flags_file, path, 0, NULL)) {
-            gchar **flag_keys;
-
-            flag_keys = g_key_file_get_keys(flags_file, "flags",
-                                            NULL, NULL);
-            if (!flag_keys) {
-                DEBUG("error while using %s as CPU flags database, falling back to internal",
-                      path);
-                populate_cpu_flags_list_internal(cpu_flags);
-            } else {
-                for (i = 0; flag_keys[i]; i++) {
-                    gchar *meaning;
-
-                    meaning = g_key_file_get_string(flags_file, "flags",
-                                                    flag_keys[i], NULL);
-
-                    g_hash_table_insert(cpu_flags, g_strdup(flag_keys[i]), meaning);
-
-                    /* can't free meaning */
-                }
-
-                g_strfreev(flag_keys);
-            }
-        }
-
-        g_key_file_free(flags_file);
-    }
-
-    g_free(path);
-}
-
-gchar *processor_get_capabilities_from_flags(gchar * strflags)
-{
-    /* FIXME:
-     * - Separate between processor capabilities, additional instructions and whatnot.
-     */
     gchar **flags, **old;
+    gchar tmp_flag[64] = "";
+    const gchar *meaning;
     gchar *tmp = NULL;
     gint j = 0;
-
-    if (!cpu_flags) {
-        cpu_flags_init();
-    }
 
     flags = g_strsplit(strflags, " ", 0);
     old = flags;
 
     while (flags[j]) {
-	gchar *meaning = g_hash_table_lookup(cpu_flags, flags[j]);
+        sprintf(tmp_flag, "%s%s", lookup_prefix, flags[j]);
+        meaning = x86_flag_meaning(tmp_flag);
 
-	if (meaning) {
-  	  tmp = h_strdup_cprintf("%s=%s\n", tmp, flags[j], meaning);
+        if (meaning) {
+            tmp = h_strdup_cprintf("%s=%s\n", tmp, flags[j], meaning);
         } else {
-  	  tmp = h_strdup_cprintf("%s=\n", tmp, flags[j]);
+            tmp = h_strdup_cprintf("%s=\n", tmp, flags[j]);
         }
-	j++;
+        j++;
     }
     if (tmp == NULL || g_strcmp0(tmp, "") == 0)
         tmp = g_strdup_printf("%s=%s\n", "empty", _("Empty List"));
@@ -571,89 +376,120 @@ gchar *processor_get_capabilities_from_flags(gchar * strflags)
 
 gchar *processor_get_detailed_info(Processor * processor)
 {
-    gchar *tmp_flags, *tmp_bugs, *tmp_pm, *ret, *cache_info;
+    gchar *tmp_flags, *tmp_bugs, *tmp_pm, *tmp_cpufreq, *tmp_topology, *ret, *cache_info;
 
-    tmp_flags = processor_get_capabilities_from_flags(processor->flags);
-    tmp_bugs = processor_get_capabilities_from_flags(processor->bugs);
-    tmp_pm = processor_get_capabilities_from_flags(processor->pm);
+    tmp_flags = processor_get_capabilities_from_flags(processor->flags, "");
+    tmp_bugs = processor_get_capabilities_from_flags(processor->bugs, "bug:");
+    tmp_pm = processor_get_capabilities_from_flags(processor->pm, "pm:");
     cache_info = __cache_get_info_as_string(processor);
 
-    ret = g_strdup_printf(_("[Processor]\n"
-			  "Name=%s\n"
-			  "Family, model, stepping=%d, %d, %d (%s)\n"
-			  "Vendor=%s\n"
-			  "[Configuration]\n"
-			  "Cache Size=%dkb\n"
-			  "Frequency=%.2fMHz\n"
-			  "BogoMIPS=%.2f\n"
-			  "Byte Order=%s\n"
-			  "[Features]\n"
-			  "Has FPU=%s\n"
-			  "[Cache]\n"
-			  "%s\n"
-			  "[Power Management]\n"
-			  "%s"
-			  "[Bugs]\n"
-			  "%s"
-			  "[Capabilities]\n"
-			  "%s"),
-			  processor->model_name,
-			  processor->family,
-			  processor->model,
-			  processor->stepping,
-			  processor->strmodel,
-			  vendor_get_name(processor->vendor_id),
-			  processor->cache_size,
-			  processor->cpu_mhz, processor->bogomips,
-#if G_BYTE_ORDER == G_LITTLE_ENDIAN
-			  "Little Endian",
-#else
-			  "Big Endian",
-#endif
-			  processor->has_fpu  ? processor->has_fpu  : "no",
-			  cache_info,
-			  tmp_pm, tmp_bugs, tmp_flags);
+    tmp_topology = cputopo_section_str(processor->cputopo);
+    tmp_cpufreq = cpufreq_section_str(processor->cpufreq);
+
+    ret = g_strdup_printf("[%s]\n"
+                       "%s=%s\n"
+                       "%s=%d, %d, %d (%s)\n" /* family, model, stepping (decoded name) */
+                       "%s=%s\n"      /* vendor */
+                       "%s=%s\n"      /* microcode */
+                       "[%s]\n"       /* configuration */
+                       "%s=%d %s\n"   /* cache size (from cpuinfo) */
+                       "%s=%.2f %s\n" /* frequency */
+                       "%s=%.2f\n"    /* bogomips */
+                       "%s=%s\n"      /* byte order */
+                       "%s"     /* topology */
+                       "%s"     /* frequency scaling */
+                       "[%s]\n" /* cache */
+                       "%s\n"
+                       "[%s]\n" /* pm */
+                       "%s"
+                       "[%s]\n" /* bugs */
+                       "%s"
+                       "[%s]\n" /* flags */
+                       "%s",
+                   _("Processor"),
+                   _("Model Name"), processor->model_name,
+                   _("Family, model, stepping"),
+                   processor->family,
+                   processor->model,
+                   processor->stepping,
+                   processor->strmodel,
+                   _("Vendor"), vendor_get_name(processor->vendor_id),
+                   _("Microcode Version"), processor->microcode,
+                   _("Configuration"),
+                   _("Cache Size"), processor->cache_size, _("kb"),
+                   _("Frequency"), processor->cpu_mhz, _("MHz"),
+                   _("BogoMips"), processor->bogomips,
+                   _("Byte Order"), byte_order_str(),
+                   tmp_topology,
+                   tmp_cpufreq,
+                   _("Cache"), cache_info,
+                   _("Power Management"), tmp_pm,
+                   _("Bug Workarounds"), tmp_bugs,
+                   _("Capabilities"), tmp_flags );
     g_free(tmp_flags);
     g_free(tmp_bugs);
     g_free(tmp_pm);
     g_free(cache_info);
+    g_free(tmp_cpufreq);
+    g_free(tmp_topology);
+    return ret;
+}
 
+gchar *processor_name(GSList * processors) {
+    return processor_name_default(processors);
+}
+
+gchar *processor_describe(GSList * processors) {
+    return processor_describe_default(processors);
+}
+
+gchar *processor_meta(GSList * processors) {
+    gchar *meta_cpu_name = processor_name(processors);
+    gchar *meta_cpu_desc = processor_describe(processors);
+    gchar *ret = NULL;
+    UNKIFNULL(meta_cpu_desc);
+    ret = g_strdup_printf("[%s]\n"
+                        "%s=%s\n"
+                        "%s=%s\n",
+                        _("Package Information"),
+                        _("Name"), meta_cpu_name,
+                        _("Description"), meta_cpu_desc);
+    g_free(meta_cpu_desc);
     return ret;
 }
 
 gchar *processor_get_info(GSList * processors)
 {
     Processor *processor;
+    gchar *ret, *tmp, *hashkey;
+    gchar *meta; /* becomes owned by more_info? no need to free? */
+    GSList *l;
 
-    if (g_slist_length(processors) > 1) {
-	gchar *ret, *tmp, *hashkey;
-	GSList *l;
+    tmp = g_strdup_printf("$CPU_META$%s=\n", _("Package Information") );
 
-	tmp = g_strdup("");
+    meta = processor_meta(processors);
+    moreinfo_add_with_prefix("DEV", "CPU_META", meta);
 
-	for (l = processors; l; l = l->next) {
-	    processor = (Processor *) l->data;
+    for (l = processors; l; l = l->next) {
+        processor = (Processor *) l->data;
 
-	    tmp = g_strdup_printf(_("%s$CPU%d$%s=%.2fMHz\n"),
-				  tmp, processor->id,
-				  processor->model_name,
-				  processor->cpu_mhz);
+        tmp = g_strdup_printf("%s$CPU%d$%s=%.2f %s\n",
+                  tmp, processor->id,
+                  processor->model_name,
+                  processor->cpu_mhz, _("MHz"));
 
-	    hashkey = g_strdup_printf("CPU%d", processor->id);
-	    moreinfo_add_with_prefix("DEV", hashkey,
-				processor_get_detailed_info(processor));
-           g_free(hashkey);
-	}
-
-	ret = g_strdup_printf("[$ShellParam$]\n"
-			      "ViewType=1\n"
-			      "[Processors]\n"
-			      "%s", tmp);
-	g_free(tmp);
-
-	return ret;
+        hashkey = g_strdup_printf("CPU%d", processor->id);
+        moreinfo_add_with_prefix("DEV", hashkey,
+                processor_get_detailed_info(processor));
+        g_free(hashkey);
     }
 
-    processor = (Processor *) processors->data;
-    return processor_get_detailed_info(processor);
+    ret = g_strdup_printf("[$ShellParam$]\n"
+                  "ViewType=1\n"
+                  "[Processors]\n"
+                  "%s", tmp);
+    g_free(tmp);
+
+    return ret;
 }
+

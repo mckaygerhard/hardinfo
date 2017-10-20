@@ -33,7 +33,8 @@ int main(int argc, char **argv)
 {
     GSList *modules;
 
-    bindtextdomain("hardinfo", "/usr/share/locale");
+    setlocale(LC_ALL, "");
+    bindtextdomain("hardinfo", LOCALEDIR);
     textdomain("hardinfo");
 
     DEBUG("HardInfo version " VERSION ". Debug version.");
@@ -43,19 +44,19 @@ int main(int argc, char **argv)
 
     /* show version information and quit */
     if (params.show_version) {
-	g_print("HardInfo version " VERSION "\n");
-	g_print
-	    (_("Copyright (C) 2003-2009 Leandro A. F. Pereira. See COPYING for details.\n\n"));
+        g_print("HardInfo version " VERSION "\n");
+        g_print
+            (_(/*/ %d will be latest year of copyright*/ "Copyright (C) 2003-%d Leandro A. F. Pereira. See COPYING for details.\n\n"), HARDINFO_COPYRIGHT_LATEST_YEAR );
 
 	g_print(_("Compile-time options:\n"
 		"  Release version:   %s (%s)\n"
 		"  BinReloc enabled:  %s\n"
 		"  Data prefix:       %s\n"
 		"  Library prefix:    %s\n"
-		"  Compiled on:       %s %s (%s)\n"),
+		"  Compiled for:      %s\n"),
 		RELEASE ? _("Yes") : "No (" VERSION ")", ARCH,
 		ENABLE_BINRELOC ? _("Yes") : _("No"),
-		PREFIX, LIBPREFIX, PLATFORM, KERNEL, HOSTNAME);
+		PREFIX, LIBPREFIX, PLATFORM);
 
 	DEBUG("  Debugging is enabled.");
 
@@ -67,13 +68,13 @@ int main(int argc, char **argv)
     if (!binreloc_init(FALSE))
 	g_error(_("Failed to find runtime data.\n\n"
 		"\342\200\242 Is HardInfo correctly installed?\n"
-		"\342\200\242 See if %s and %s exists and you have read permision."),
+		"\342\200\242 See if %s and %s exists and you have read permission."),
 		PREFIX, LIBPREFIX);
 
     /* list all module names */
     if (params.list_modules) {
 	g_print(_("Modules:\n"
-		"%-20s%-15s%-12s\n"), _("File Name"), _("Name"), _("Version"));
+		"%-20s %-15s %-12s\n"), _("File Name"), _("Name"), _("Version"));
 
 	for (modules = modules_load_all(); modules;
 	     modules = modules->next) {
@@ -81,7 +82,7 @@ int main(int argc, char **argv)
 	    ModuleAbout *ma = module_get_about(module);
 	    gchar *name = g_path_get_basename(g_module_name(module->dll));
 
-	    g_print("%-20s%-15s%-12s\n", name, module->name, ma->version);
+	    g_print("%-20s %-15s %-12s\n", name, module->name, ma->version);
 
 	    g_free(name);
 	}
@@ -111,13 +112,13 @@ int main(int argc, char **argv)
 
     /* initialize vendor database */
     vendor_init();
-    
+
     /* initialize moreinfo */
     moreinfo_init();
 
     if (params.run_benchmark) {
         gchar *result;
-        
+
         result = module_call_method_param("benchmark::runBenchmark", params.run_benchmark);
         if (!result) {
           g_error(_("Unknown benchmark ``%s'' or libbenchmark.so not loaded"), params.run_benchmark);

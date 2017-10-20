@@ -20,10 +20,30 @@
  * You should have received a copy of the GNU Lesser General Public
  * License along with the Simple Load Graph; if not, write to the Free
  * Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
- * 02111-1307 USA. 
+ * 02111-1307 USA.
  */
 
 #include "loadgraph.h"
+
+struct _LoadGraph {
+    GdkPixmap     *buf;
+    GdkGC         *grid;
+    GdkGC         *trace;
+    GdkGC         *fill;
+    GtkWidget     *area;
+
+    gint          *data;
+    gfloat         scale;
+
+    gint       size;
+    gint       width, height;
+    LoadGraphColor color;
+
+    gint       max_value, remax_count;
+
+    PangoLayout   *layout;
+    gchar     *suffix;
+};
 
 static void _draw(LoadGraph * lg);
 
@@ -89,7 +109,7 @@ void load_graph_clear(LoadGraph * lg)
     gint i;
 
     for (i = 0; i < lg->size; i++)
-	lg->data[i] = 0;
+        lg->data[i] = 0;
 
     lg->scale = 1.0;
     lg->max_value = 1;
@@ -119,14 +139,14 @@ void load_graph_destroy(LoadGraph * lg)
 }
 
 static gboolean _expose(GtkWidget * widget, GdkEventExpose * event,
-			gpointer user_data)
+            gpointer user_data)
 {
     LoadGraph *lg = (LoadGraph *) user_data;
     GdkDrawable *draw = GDK_DRAWABLE(lg->buf);
 
     gdk_draw_drawable(lg->area->window,
-		      lg->area->style->black_gc,
-		      draw, 0, 0, 0, 0, lg->width, lg->height);
+              lg->area->style->black_gc,
+              draw, 0, 0, 0, 0, lg->width, lg->height);
     return FALSE;
 }
 
@@ -146,27 +166,17 @@ void load_graph_configure_expose(LoadGraph * lg)
 
     /* init graphic contexts */
     gdk_gc_set_line_attributes(lg->grid,
-			       1, GDK_LINE_ON_OFF_DASH,
-			       GDK_CAP_NOT_LAST, GDK_JOIN_ROUND);
+                   1, GDK_LINE_ON_OFF_DASH,
+                   GDK_CAP_NOT_LAST, GDK_JOIN_ROUND);
     gdk_gc_set_dashes(lg->grid, 0, (gint8*)"\2\2", 2);
-    
-#if 0				/* old-style grid */
-    gdk_rgb_gc_set_foreground(lg->grid, 0x707070);
-#endif
 
     gdk_gc_set_line_attributes(lg->trace,
-			       1, GDK_LINE_SOLID,
-			       GDK_CAP_PROJECTING, GDK_JOIN_ROUND);
-
-#if 0				/* old-style fill */
-    gdk_gc_set_line_attributes(lg->fill,
-			       1, GDK_LINE_SOLID,
-			       GDK_CAP_BUTT, GDK_JOIN_BEVEL);
-#endif
+                   1, GDK_LINE_SOLID,
+                   GDK_CAP_PROJECTING, GDK_JOIN_ROUND);
 
     /* configures the expose event */
     g_signal_connect(G_OBJECT(lg->area), "expose-event",
-		     (GCallback) _expose, lg);
+             (GCallback) _expose, lg);
 }
 
 static void _draw_label_and_line(LoadGraph * lg, gint position, gint value)
@@ -175,21 +185,21 @@ static void _draw_label_and_line(LoadGraph * lg, gint position, gint value)
 
     /* draw lines */
     if (position > 0)
-	gdk_draw_line(GDK_DRAWABLE(lg->buf), lg->grid, 0, position,
-		      lg->width, position);
+        gdk_draw_line(GDK_DRAWABLE(lg->buf), lg->grid, 0, position,
+                  lg->width, position);
     else
-	position = -1 * position;
+        position = -1 * position;
 
     /* draw label */
     tmp =
-	g_strdup_printf("<span size=\"x-small\">%d%s</span>", value,
-			lg->suffix);
+    g_strdup_printf("<span size=\"x-small\">%d%s</span>", value,
+            lg->suffix);
 
     pango_layout_set_markup(lg->layout, tmp, -1);
     pango_layout_set_width(lg->layout,
-			   lg->area->allocation.width * PANGO_SCALE);
+               lg->area->allocation.width * PANGO_SCALE);
     gdk_draw_layout(GDK_DRAWABLE(lg->buf), lg->trace, 2, position,
-		    lg->layout);
+            lg->layout);
 
     g_free(tmp);
 }
@@ -201,15 +211,15 @@ static void _draw(LoadGraph * lg)
 
     /* clears the drawing area */
     gdk_draw_rectangle(draw, lg->area->style->black_gc,
-		       TRUE, 0, 0, lg->width, lg->height);
+               TRUE, 0, 0, lg->width, lg->height);
 
 
     /* the graph */
     GdkPoint *points = g_new0(GdkPoint, lg->size + 1);
 
     for (i = 0; i < lg->size; i++) {
-	points[i].x = i * 4;
-	points[i].y = lg->height - lg->data[i] * lg->scale;
+        points[i].x = i * 4;
+        points[i].y = lg->height - lg->data[i] * lg->scale;
     }
 
     points[0].x = points[1].x = 0;
@@ -223,8 +233,8 @@ static void _draw(LoadGraph * lg)
 
     /* vertical bars */
     for (i = lg->width, d = 0; i > 1; i--, d++)
-	if ((d % 45) == 0 && d)
-	    gdk_draw_line(draw, lg->grid, i, 0, i, lg->height);
+        if ((d % 45) == 0 && d)
+            gdk_draw_line(draw, lg->grid, i, 0, i, lg->height);
 
     /* horizontal bars and labels; 25%, 50% and 75% */
     _draw_label_and_line(lg, -1, lg->max_value);
@@ -232,41 +242,27 @@ static void _draw(LoadGraph * lg)
     _draw_label_and_line(lg, lg->height / 2, lg->max_value / 2);
     _draw_label_and_line(lg, 3 * (lg->height / 4), lg->max_value / 4);
 
-#if 0				/* old-style drawing */
-    for (i = 0; i < lg->size; i++) {
-	gint this = lg->height - lg->data[i] * lg->scale;
-	gint next = lg->height - lg->data[i + 1] * lg->scale;
-	gint i4 = i * 4;
-
-	gdk_draw_line(draw, lg->fill, i4, this, i4, lg->height);
-	gdk_draw_line(draw, lg->fill, i4 + 2, this, i4 + 2, lg->height);
-    }
-
-    for (i = 0; i < lg->size; i++) {
-	gint this = lg->height - lg->data[i] * lg->scale;
-	gint next = lg->height - lg->data[i + 1] * lg->scale;
-	gint i4 = i * 4;
-
-	gdk_draw_line(draw, lg->trace, i4, this, i4 + 2,
-		      (this + next) / 2);
-	gdk_draw_line(draw, lg->trace, i4 + 2, (this + next) / 2,
-		      i4 + 4, next);
-    }
-#endif
-
     gtk_widget_queue_draw(lg->area);
 }
 
-void load_graph_update(LoadGraph * lg, gint value)
+void load_graph_update_ex(LoadGraph *lg, guint line, gdouble value)
+{
+    /* not implemented */
+    if (line == 0)
+        load_graph_update(lg, value);
+}
+
+void load_graph_update(LoadGraph * lg, gdouble v)
 {
     gint i;
+    gint value = (gint)v;
 
     if (value < 0)
-	return;
+        return;
 
     /* shift-right our data */
     for (i = 0; i < lg->size - 1; i++) {
-	lg->data[i] = lg->data[i + 1];
+        lg->data[i] = lg->data[i + 1];
     }
 
     /* insert the updated value */
@@ -274,20 +270,20 @@ void load_graph_update(LoadGraph * lg, gint value)
 
     /* calculates the maximum value */
     if (lg->remax_count++ > 20) {
-	/* only finds the maximum amongst the data every 20 times */
-	lg->remax_count = 0;
+        /* only finds the maximum amongst the data every 20 times */
+        lg->remax_count = 0;
 
-	gint max = lg->data[0];
-	for (i = 1; i < lg->size; i++) {
-	    if (lg->data[i] > max)
-		max = lg->data[i];
-	}
+        gint max = lg->data[0];
+        for (i = 1; i < lg->size; i++) {
+            if (lg->data[i] > max)
+            max = lg->data[i];
+        }
 
-	lg->max_value = max;
+        lg->max_value = max;
     } else {
-	/* otherwise, select the maximum between the current maximum
-	   and the supplied value */
-	lg->max_value = MAX(value, lg->max_value);
+        /* otherwise, select the maximum between the current maximum
+           and the supplied value */
+        lg->max_value = MAX(value, lg->max_value);
     }
 
     /* recalculates the scale; always use 90% of it */
@@ -297,53 +293,8 @@ void load_graph_update(LoadGraph * lg, gint value)
     _draw(lg);
 }
 
-#ifdef LOADGRAPH_UNIT_TEST
-gboolean lg_update(gpointer d)
-{
-    LoadGraph *lg = (LoadGraph *) d;
-
-    static int i = 0;
-    static int j = 1;
-
-    if (i > 150) {
-	j = -1;
-    } else if (i < 0) {
-	j = 1;
-    }
-
-    i += j;
-    if (rand() % 10 > 8)
-	i *= 2;
-    if (rand() % 10 < 2)
-	i /= 2;
-    load_graph_update(lg, i + rand() % 50);
-
-    return TRUE;
-}
-
-int main(int argc, char **argv)
-{
-	
-   
-    LoadGraph *lg;
-    GtkWidget *window;
-
-    gtk_init(&argc, &argv);
-
-    window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
-    gtk_widget_show(window);
-
-    lg = load_graph_new(50);
-    gtk_container_add(GTK_CONTAINER(window), load_graph_get_framed(lg));
-    gtk_container_set_border_width(GTK_CONTAINER(window), 20);
-    load_graph_configure_expose(lg);
-
-    lg_update(lg);
-
-    g_timeout_add(100, lg_update, lg);
-
-    gtk_main();
-
+gint load_graph_get_height(LoadGraph *lg) {
+    if (lg != NULL)
+        return lg->height;
     return 0;
 }
-#endif

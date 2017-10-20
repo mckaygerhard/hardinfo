@@ -3,6 +3,7 @@
 
 #include "hardinfo.h"
 #include "processor-platform.h"
+#include "dmi_util.h"
 
 typedef struct _Processor Processor;
 
@@ -38,10 +39,14 @@ typedef struct _Processor Processor;
 /* Processor */
 GSList *processor_scan(void);
 void get_processor_strfamily(Processor * processor);
-void cpu_flags_init(void);
-gchar *processor_get_capabilities_from_flags(gchar * strflags);
 gchar *processor_get_detailed_info(Processor * processor);
 gchar *processor_get_info(GSList * processors);
+gchar *processor_name(GSList * processors);
+gchar *processor_name_default(GSList * processors);
+gchar *processor_describe(GSList * processors);
+gchar *processor_describe_default(GSList * processors);
+gchar *processor_describe_by_counting_names(GSList * processors);
+gchar *processor_frequency_desc(GSList *processors);
 
 /* Memory */
 void init_memory_labels(void);
@@ -88,8 +93,10 @@ extern GHashTable *sensor_labels;
 extern GModule *cups;
 
 #if defined(ARCH_x86) || defined(ARCH_x86_64)
-extern gchar *dmi_info;
 extern gchar *spd_info;
+extern gchar *dmi_info;
 #endif
+
+extern gchar *dtree_info;
 
 #endif /* __DEVICES_H__ */

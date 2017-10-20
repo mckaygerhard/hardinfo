@@ -37,42 +37,6 @@ void cb_sync_manager()
     sync_manager_show(shell->window);
 }
 
-void cb_save_graphic()
-{
-    Shell *shell = shell_get_main_shell();
-    GtkWidget *dialog;
-    gchar *filename;
-
-    /* save the pixbuf to a png file */
-    dialog = gtk_file_chooser_dialog_new(_("Save Image"),
-					 NULL,
-					 GTK_FILE_CHOOSER_ACTION_SAVE,
-					 GTK_STOCK_CANCEL,
-					 GTK_RESPONSE_CANCEL,
-					 GTK_STOCK_SAVE,
-					 GTK_RESPONSE_ACCEPT, NULL);
-
-    filename = g_strconcat(shell->selected->name, ".png", NULL);
-    gtk_file_chooser_set_current_name(GTK_FILE_CHOOSER(dialog), filename);
-    g_free(filename);
-
-    if (gtk_dialog_run(GTK_DIALOG(dialog)) == GTK_RESPONSE_ACCEPT) {
-	filename = gtk_file_chooser_get_filename(GTK_FILE_CHOOSER(dialog));
-	gtk_widget_destroy(dialog);
-
-	shell_status_update(_("Saving image..."));
-
-	tree_view_save_image(filename);
-
-	shell_status_update(_("Done."));
-	g_free(filename);
-
-	return;
-    }
-
-    gtk_widget_destroy(dialog);
-}
-
 void cb_open_web_page()
 {
     open_url("http://www.hardinfo.org");
@@ -148,8 +112,14 @@ void cb_about_module(GtkAction * action)
 
 	    about = gtk_about_dialog_new();
 
-	    text = g_strdup_printf(_("%s Module"), sm->name);
+	    gtk_window_set_transient_for(GTK_WINDOW(about), GTK_WINDOW(shell->window));
+
+	    text = g_strdup(sm->name);
+#if GTK_CHECK_VERSION(2, 12, 0)
+	    gtk_about_dialog_set_program_name(GTK_ABOUT_DIALOG(about), text);
+#else
 	    gtk_about_dialog_set_name(GTK_ABOUT_DIALOG(about), text);
+#endif
 	    g_free(text);
 
 	    gtk_about_dialog_set_version(GTK_ABOUT_DIALOG(about),
@@ -162,7 +132,7 @@ void cb_about_module(GtkAction * action)
 
 	    if (ma->description)
 		gtk_about_dialog_set_comments(GTK_ABOUT_DIALOG(about),
-					      ma->description);
+					      _(ma->description));
 
 	    gtk_about_dialog_set_logo(GTK_ABOUT_DIALOG(about), sm->icon);
 	    gtk_dialog_run(GTK_DIALOG(about));
@@ -181,41 +151,51 @@ void cb_about_module(GtkAction * action)
 
 void cb_about()
 {
+    Shell *shell = shell_get_main_shell();
     GtkWidget *about;
+    gchar *copyright = NULL;
     const gchar *authors[] = {
-	_("Author:"),
-	"Leandro A. F. Pereira",
-	"",
-	_("Contributors:"),
-	"Agney Lopes Roth Ferraz",
-	"Andrey Esin",
-	"",
-	_("Based on work by:"),
-	_("MD5 implementation by Colin Plumb (see md5.c for details)"),
-	_("SHA1 implementation by Steve Reid (see sha1.c for details)"),
-	_("Blowfish implementation by Paul Kocher (see blowfich.c for details)"),
-	_("Raytracing benchmark by John Walker (see fbench.c for details)"),
-	_("FFT benchmark by Scott Robert Ladd (see fftbench.c for details)"),
-	_("Some code partly based on x86cpucaps by Osamu Kayasono"),
-	_("Vendor list based on GtkSysInfo by Pissens Sebastien"),
-	_("DMI support based on code by Stewart Adam"),
-	_("SCSI support based on code by Pascal F. Martin"),
-	NULL
+        _("Author:"),
+        "Leandro A. F. Pereira",
+        "",
+        _("Contributors:"),
+        "Agney Lopes Roth Ferraz",
+        "Andrey Esin",
+        "Burt P.",
+        "",
+        _("Based on work by:"),
+        _("MD5 implementation by Colin Plumb (see md5.c for details)"),
+        _("SHA1 implementation by Steve Reid (see sha1.c for details)"),
+        _("Blowfish implementation by Paul Kocher (see blowfich.c for details)"),
+        _("Raytracing benchmark by John Walker (see fbench.c for details)"),
+        _("FFT benchmark by Scott Robert Ladd (see fftbench.c for details)"),
+        _("Some code partly based on x86cpucaps by Osamu Kayasono"),
+        _("Vendor list based on GtkSysInfo by Pissens Sebastien"),
+        _("DMI support based on code by Stewart Adam"),
+        _("SCSI support based on code by Pascal F. Martin"),
+        NULL
     };
     const gchar *artists[] = {
-	_("Jakub Szypulka"),
-	_("Tango Project"),
-	_("The GNOME Project"),
-	_("VMWare, Inc. (USB icon from VMWare Workstation 6)"),
-	NULL
+        "Jakub Szypulka",
+        _("Tango Project"),
+        _("The GNOME Project"),
+        _("VMWare, Inc. (USB icon from VMWare Workstation 6)"),
+        NULL
     };
 
     about = gtk_about_dialog_new();
+    gtk_window_set_transient_for(GTK_WINDOW(about), GTK_WINDOW(shell->window));
+
+#if GTK_CHECK_VERSION(2, 12, 0)
+    gtk_about_dialog_set_program_name(GTK_ABOUT_DIALOG(about), "HardInfo");
+#else
     gtk_about_dialog_set_name(GTK_ABOUT_DIALOG(about), "HardInfo");
+#endif
+
+    copyright = g_strdup_printf("Copyright \302\251 2003-%d Leandro A. F. Pereira", HARDINFO_COPYRIGHT_LATEST_YEAR);
+
     gtk_about_dialog_set_version(GTK_ABOUT_DIALOG(about), VERSION);
-    gtk_about_dialog_set_copyright(GTK_ABOUT_DIALOG(about),
-				   "Copyright \302\251 2003-2016 "
-				   "Leandro A. F. Pereira");
+    gtk_about_dialog_set_copyright(GTK_ABOUT_DIALOG(about), copyright);
     gtk_about_dialog_set_comments(GTK_ABOUT_DIALOG(about),
 				  _("System information and benchmark tool"));
     gtk_about_dialog_set_logo(GTK_ABOUT_DIALOG(about),
@@ -232,15 +212,17 @@ void cb_about()
 				 "You should have received a copy of the GNU General Public License "
 				 "along with this program; if not, write to the Free Software "
 				 "Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301 USA"));
-#if GTK_CHECK_VERSION(2,8,0)
     gtk_about_dialog_set_wrap_license(GTK_ABOUT_DIALOG(about), TRUE);
-#endif
 
     gtk_about_dialog_set_authors(GTK_ABOUT_DIALOG(about), authors);
     gtk_about_dialog_set_artists(GTK_ABOUT_DIALOG(about), artists);
+    gtk_about_dialog_set_translator_credits(GTK_ABOUT_DIALOG(about),
+        _("translator-credits"));
 
     gtk_dialog_run(GTK_DIALOG(about));
     gtk_widget_destroy(about);
+
+    g_free(copyright);
 }
 
 void cb_generate_report()
@@ -260,6 +242,6 @@ void cb_quit(void)
     do {
 	gtk_main_quit();
     } while (gtk_main_level() > 1);
-    
+
     exit(0);
 }

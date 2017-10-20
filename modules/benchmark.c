@@ -30,12 +30,15 @@
 
 #include "benchmark.h"
 
+#include "benchmark/bench_results.c"
+
 void scan_fft(gboolean reload);
 void scan_raytr(gboolean reload);
 void scan_bfsh(gboolean reload);
 void scan_cryptohash(gboolean reload);
 void scan_fib(gboolean reload);
 void scan_nqueens(gboolean reload);
+void scan_zlib(gboolean reload);
 void scan_gui(gboolean reload);
 
 gchar *callback_fft();
@@ -44,6 +47,7 @@ gchar *callback_bfsh();
 gchar *callback_fib();
 gchar *callback_cryptohash();
 gchar *callback_nqueens();
+gchar *callback_zlib();
 gchar *callback_gui();
 
 static ModuleEntry entries[] = {
@@ -51,9 +55,12 @@ static ModuleEntry entries[] = {
     {N_("CPU CryptoHash"), "cryptohash.png", callback_cryptohash, scan_cryptohash, MODULE_FLAG_NONE},
     {N_("CPU Fibonacci"), "nautilus.png", callback_fib, scan_fib, MODULE_FLAG_NONE},
     {N_("CPU N-Queens"), "nqueens.png", callback_nqueens, scan_nqueens, MODULE_FLAG_NONE},
+    {N_("CPU Zlib"), "file-roller.png", callback_zlib, scan_zlib, MODULE_FLAG_NONE},
     {N_("FPU FFT"), "fft.png", callback_fft, scan_fft, MODULE_FLAG_NONE},
     {N_("FPU Raytracing"), "raytrace.png", callback_raytr, scan_raytr, MODULE_FLAG_NONE},
+#if !GTK_CHECK_VERSION(3,0,0)
     {N_("GPU Drawing"), "module.png", callback_gui, scan_gui, MODULE_FLAG_NO_REMOTE},
+#endif
     {NULL}
 };
 
@@ -181,68 +188,107 @@ static gchar *clean_cpuname(gchar *cpuname)
     return tmp;
 }
 
+gchar *hi_more_info(gchar * entry)
+{
+    gchar *info = moreinfo_lookup_with_prefix("BENCH", entry);
+    if (info)
+        return g_strdup(info);
+    return g_strdup("?");
+}
+
+gchar *hi_get_field(gchar * field)
+{
+    gchar *info = moreinfo_lookup_with_prefix("BENCH", field);
+    if (info)
+        return g_strdup(info);
+    return g_strdup(field);
+}
+
+static void br_mi_add(char **results_list, bench_result *b, gboolean select) {
+    gchar *ckey, *rkey;
+
+    ckey = hardinfo_clean_label(b->machine->cpu_name, 0);
+    rkey = strdup(b->machine->mid);
+
+    *results_list = h_strdup_cprintf("$%s%s$%s=%.2f|%s\n", *results_list,
+        select ? "*" : "", rkey, ckey,
+        b->result, b->machine->cpu_config);
+
+    moreinfo_add_with_prefix("BENCH", rkey, bench_result_more_info(b) );
+
+    g_free(ckey);
+    g_free(rkey);
+}
+
 static gchar *__benchmark_include_results(gdouble result,
 					  const gchar * benchmark,
 					  ShellOrderType order_type)
 {
+    bench_result *b = NULL;
     GKeyFile *conf;
-    gchar **machines;
-    gchar *path, *results = g_strdup(""), *return_value, *processor_frequency;
-    int i;
+    gchar **machines, *temp = NULL;;
+    gchar *path, *results = g_strdup(""), *return_value, *processor_frequency, *processor_name;
+    int i, n_threads;
+
+    moreinfo_del_with_prefix("BENCH");
+
+    if (result > 0.0) {
+        temp = module_call_method("devices::getProcessorCount");
+        n_threads = temp ? atoi(temp) : 1;
+        g_free(temp); temp = NULL;
+
+        b = bench_result_this_machine(benchmark, result, n_threads);
+        br_mi_add(&results, b, 1);
+
+        temp = bench_result_benchmarkconf_line(b);
+        printf("[%s]\n%s", benchmark, temp);
+        g_free(temp); temp = NULL;
+    }
 
     conf = g_key_file_new();
 
     path = g_build_filename(g_get_home_dir(), ".hardinfo", "benchmark.conf", NULL);
     if (!g_file_test(path, G_FILE_TEST_EXISTS)) {
-	DEBUG("local benchmark.conf not found, trying system-wide");
-	g_free(path);
-	path = g_build_filename(params.path_data, "benchmark.conf", NULL);
+        DEBUG("local benchmark.conf not found, trying system-wide");
+        g_free(path);
+        path = g_build_filename(params.path_data, "benchmark.conf", NULL);
     }
 
     g_key_file_load_from_file(conf, path, 0, NULL);
+    g_key_file_set_list_separator(conf, '|');
 
     machines = g_key_file_get_keys(conf, benchmark, NULL, NULL);
     for (i = 0; machines && machines[i]; i++) {
-	gchar *value, *cleaned_machine;
+        gchar **values;
+        bench_result *sbr;
 
-	value   = g_key_file_get_value(conf, benchmark, machines[i], NULL);
-	cleaned_machine = clean_cpuname(machines[i]);
-	results = h_strconcat(results, cleaned_machine, "=", value, "\n", NULL);
+        values = g_key_file_get_string_list(conf, benchmark, machines[i], NULL, NULL);
 
-	g_free(value);
-	g_free(cleaned_machine);
+        sbr = bench_result_benchmarkconf(benchmark, machines[i], values);
+        br_mi_add(&results, sbr, 0);
+
+        bench_result_free(sbr);
+        g_strfreev(values);
     }
 
     g_strfreev(machines);
     g_free(path);
     g_key_file_free(conf);
 
-    if (result > 0.0f) {
-        processor_frequency = module_call_method("devices::getProcessorFrequency");
-        return_value = g_strdup_printf(_("[$ShellParam$]\n"
-			       	   "Zebra=1\n"
-			       	   "OrderType=%d\n"
-	       			   "ViewType=3\n"
-	       			   "ColumnTitle$Extra1=CPU Clock\n"
-			       	   "ColumnTitle$Progress=Results\n"
-			       	   "ColumnTitle$TextValue=CPU\n"
-			       	   "ShowColumnHeaders=true\n"
-	       			   "[%s]\n"
-		       		   "<big><b>This Machine</b></big>=%.3f|%s MHz\n"
-			       	   "%s"), order_type, benchmark, result, processor_frequency, results);
-        g_free(processor_frequency);
-    } else {
-        return_value = g_strdup_printf(_("[$ShellParam$]\n"
-			       	   "Zebra=1\n"
-			       	   "OrderType=%d\n"
-	       			   "ViewType=3\n"
-	       			   "ColumnTitle$Extra1=CPU Clock\n"
-			       	   "ColumnTitle$Progress=Results\n"
-			       	   "ColumnTitle$TextValue=CPU\n"
-			       	   "ShowColumnHeaders=true\n"
-	       			   "[%s]\n"
-			       	   "%s"), order_type, benchmark, results);
-    }
+    return_value = g_strdup_printf("[$ShellParam$]\n"
+                   "Zebra=1\n"
+                   "OrderType=%d\n"
+                   "ViewType=4\n"
+                   "ColumnTitle$Extra1=%s\n" /* CPU Clock */
+                   "ColumnTitle$Progress=%s\n" /* Results */
+                   "ColumnTitle$TextValue=%s\n" /* CPU */
+                   "ShowColumnHeaders=true\n"
+                   "[%s]\n%s",
+                   order_type,
+                   _("CPU Config"), _("Results"), _("CPU"),
+                   benchmark, results);
+
+    bench_result_free(b);
     return return_value;
 }
 
@@ -306,6 +352,12 @@ gchar *callback_fib()
 				     "CPU Fibonacci");
 }
 
+gchar *callback_zlib()
+{
+    return benchmark_include_results(bench_results[BENCHMARK_ZLIB],
+				     "CPU Zlib");
+}
+
 typedef struct _BenchmarkDialog BenchmarkDialog;
 struct _BenchmarkDialog {
     GtkWidget *dialog;
@@ -348,7 +400,7 @@ static gboolean do_benchmark_handler(GIOChannel *source,
 static void do_benchmark(void (*benchmark_function)(void), int entry)
 {
     int old_priority = 0;
-    
+
     if (params.gui_running && !sending_benchmark_results) {
        gchar *argv[] = { params.argv0, "-b", entries[entry].name,
                          "-m", "benchmark.so", "-a", NULL };
@@ -364,12 +416,33 @@ static void do_benchmark(void (*benchmark_function)(void), int entry)
 
        shell_view_set_enabled(FALSE);
        shell_status_update(bench_status);
-       
+
        g_free(bench_status);
 
        bench_image = icon_cache_get_image("benchmark.png");
        gtk_widget_show(bench_image);
 
+#if GTK_CHECK_VERSION(3, 0, 0)
+       GtkWidget *button;
+       GtkWidget *content_area;
+       GtkWidget *hbox;
+       GtkWidget *label;
+       
+       bench_dialog = gtk_dialog_new_with_buttons("",
+                                                  NULL,
+                                                  GTK_DIALOG_MODAL,
+                                                  _("Cancel"),
+                                                  GTK_RESPONSE_ACCEPT,
+                                                  NULL);
+       content_area = gtk_dialog_get_content_area(GTK_DIALOG(bench_dialog));
+       label = gtk_label_new(_("Benchmarking. Please do not move your mouse " \
+                                             "or press any keys."));
+       hbox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 5);
+       gtk_box_pack_start(GTK_BOX(hbox), bench_image, TRUE, TRUE, 5);
+       gtk_box_pack_end(GTK_BOX(hbox), label, TRUE, TRUE, 5);
+       gtk_container_add(GTK_CONTAINER (content_area), hbox);
+       gtk_widget_show_all(bench_dialog);
+#else 
        bench_dialog = gtk_message_dialog_new(GTK_WINDOW(shell_get_main_shell()->window),
                                              GTK_DIALOG_MODAL,
                                              GTK_MESSAGE_INFO,
@@ -380,6 +453,7 @@ static void do_benchmark(void (*benchmark_function)(void), int entry)
        gtk_dialog_add_buttons(GTK_DIALOG(bench_dialog),
                               _("Cancel"), GTK_RESPONSE_ACCEPT, NULL);
        gtk_message_dialog_set_image(GTK_MESSAGE_DIALOG(bench_dialog), bench_image);
+#endif
 
        while (gtk_events_pending()) {
          gtk_main_iteration();
@@ -388,7 +462,7 @@ static void do_benchmark(void (*benchmark_function)(void), int entry)
        benchmark_dialog = g_new0(BenchmarkDialog, 1);
        benchmark_dialog->dialog = bench_dialog;
        benchmark_dialog->result = -1.0f;
-       
+
        if (!g_path_is_absolute(params.argv0)) {
           spawn_flags |= G_SPAWN_SEARCH_PATH;
        }
@@ -432,7 +506,7 @@ static void do_benchmark(void (*benchmark_function)(void), int entry)
 
           return;
        }
-       
+
        gtk_widget_destroy(bench_dialog);
        g_free(benchmark_dialog);
        shell_status_set_enabled(TRUE);
@@ -504,12 +578,20 @@ void scan_fib(gboolean reload)
     SCAN_END();
 }
 
+void scan_zlib(gboolean reload)
+{
+    SCAN_START();
+    do_benchmark(benchmark_zlib, BENCHMARK_ZLIB);
+    SCAN_END();
+}
+
 const gchar *hi_note_func(gint entry)
 {
     switch (entry) {
     case BENCHMARK_CRYPTOHASH:
 	return _("Results in MiB/second. Higher is better.");
 
+    case BENCHMARK_ZLIB:
     case BENCHMARK_GUI:
         return _("Results in HIMarks. Higher is better.");
 
@@ -566,7 +648,7 @@ static gchar *get_benchmark_results()
 				    "machine=%s\n"
 				    "machineclock=%s\n"
 				    "machineram=%s\n"
-				    "nbenchmarks=%d\n",
+				    "nbenchmarks=%zu\n",
 				    machine,
 				    machineclock,
 				    machineram,
@@ -595,7 +677,7 @@ static gchar *get_benchmark_results()
     g_free(machineram);
 
     sending_benchmark_results = FALSE;
-    
+
     return result;
 }
 
@@ -660,4 +742,3 @@ gchar **hi_module_get_dependencies(void)
 
     return deps;
 }
-
