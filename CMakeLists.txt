@@ -12,7 +12,8 @@ SET( CMAKE_MODULE_PATH  "${CMAKE_CURRENT_SOURCE_DIR}/cmake" )
 include(GNUInstallDirs)
 
 if(${CMAKE_BUILD_TYPE} MATCHES [Dd]ebug)
-  set(HARDINFO_DEBUG 1)
+	set(HARDINFO_DEBUG 1)
+	set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fsanitize=address")
 endif()
 
 if(${CMAKE_HOST_SYSTEM_NAME} MATCHES "Linux")
@@ -213,6 +214,7 @@ endif()
 
 if (HARDINFO_GTK3)
 add_executable(hardinfo
+	hardinfo/usb_util.c
 	hardinfo/binreloc.c
 	hardinfo/expr.c
         hardinfo/hardinfo.c
@@ -241,6 +243,7 @@ target_link_libraries(hardinfo
 )
 else()
 add_executable(hardinfo
+	hardinfo/usb_util.c
 	hardinfo/binreloc.c
 	hardinfo/expr.c
         hardinfo/hardinfo.c
@@ -296,5 +299,9 @@ install(DIRECTORY doc
 )
 install(FILES ${HARDINFO_MANPAGES}
 	DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/man/man1
+	PERMISSIONS OWNER_READ OWNER_WRITE GROUP_READ WORLD_READ
+)
+install(FILES pixmaps/hardinfo.png
+	DESTINATION share/icons/hicolor/48x48/apps
 	PERMISSIONS OWNER_READ OWNER_WRITE GROUP_READ WORLD_READ
 )

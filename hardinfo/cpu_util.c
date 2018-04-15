@@ -85,7 +85,8 @@ int cpu_procs_cores_threads(int *p, int *c, int *t) {
         for (i = 0; i <= m; i++) {
             pack_id = get_cpu_int("topology/physical_package_id", i, CPU_TOPO_NULL);
             core_id = get_cpu_int("topology/core_id", i, CPU_TOPO_NULL);
-            if (pack_id >= 0) { CPUBIT_SET(packs, pack_id); }
+            if (pack_id < 0) pack_id = 0;
+            CPUBIT_SET(packs, pack_id);
             if (core_id >= 0) { CPUBIT_SET(cores, (pack_id * MAX_CORES_PER_PACK) + core_id ); }
         }
         *t = cpubits_count(threads);
@@ -128,6 +129,11 @@ void cpufreq_update(cpufreq_data *cpufd, int cur_only)
         cpufd->cpukhz_max = get_cpu_int("cpufreq/scaling_max_freq", cpufd->id, 0);
         if (cpufd->scaling_driver == NULL) cpufd->scaling_driver = g_strdup("(Unknown)");
         if (cpufd->scaling_governor == NULL) cpufd->scaling_governor = g_strdup("(Unknown)");
+
+        /* x86 uses freqdomain_cpus, all others use affected_cpus */
+        cpufd->shared_list = get_cpu_str("cpufreq/freqdomain_cpus", cpufd->id);
+        if (cpufd->shared_list == NULL) cpufd->shared_list = get_cpu_str("cpufreq/affected_cpus", cpufd->id);
+        if (cpufd->shared_list == NULL) cpufd->shared_list = g_strdup_printf("%d", cpufd->id);
     }
 }
 

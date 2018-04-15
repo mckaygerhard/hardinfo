@@ -1,6 +1,6 @@
 /*
  *    HardInfo - Displays System Information
- *    Copyright (C) 2003-2007 Leandro A. F. Pereira <leandro@hardinfo.org>
+ *    Copyright (C) 2003-2017 Leandro A. F. Pereira <leandro@hardinfo.org>
  *
  *    This program is free software; you can redistribute it and/or modify
  *    it under the terms of the GNU General Public License as published by
@@ -16,33 +16,38 @@
  *    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301 USA
  */
 
-#include "benchmark.h"
+#ifndef __USB_UTIL_H__
+#define __USB_UTIL_H__
 
-void fbench();	/* fbench.c */
+/* this is a linked list */
+typedef struct usbd {
+    int bus, dev;
+    int vendor_id, product_id;
+    char *vendor;
+    char *product;
 
-static gpointer
-parallel_raytrace(unsigned int start, unsigned int end, gpointer data, gint thread_number)
-{
-    unsigned int i;
+    int dev_class;
+    int dev_subclass;
+    char *dev_class_str;
+    char *dev_subclass_str;
 
-    for (i = start; i <= end; i++) {
-        fbench();
-    }
+    char *usb_version;
+    char *device_version; /* bcdDevice */
 
-    return NULL;
-}
+    int max_curr_ma;
 
-void
-benchmark_raytrace(void)
-{
-    bench_value r = EMPTY_BENCH_VALUE;
+    int speed_mbs; /* TODO: */
 
-    shell_view_set_enabled(FALSE);
-    shell_status_update("Performing John Walker's FBENCH...");
+    gboolean user_scan; /* not scanned as root */
 
-    r = benchmark_parallel_for(0, 0, 1000, parallel_raytrace, NULL);
-    r.result = r.elapsed_time;
+    struct usbd *next;
+} usbd;
 
-    bench_results[BENCHMARK_RAYTRACE] = r;
-}
+usbd *usb_get_device_list();
+int usbd_list_count(usbd *);
+void usbd_list_free(usbd *);
 
+usbd *usb_get_device(int bus, int dev);
+void usbd_free(usbd *);
+
+#endif
